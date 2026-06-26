@@ -64,23 +64,40 @@ export function registerIpcHandlers(): void {
 
   // --- AUTH / USER HANDLERS ---
   ipcMain.handle('auth:login', async (_, { username, password }) => {
-
     try {
-      const passwordHash = hashPassword(password)
+      if (!username || !password) {
+        return { success: false, error: 'اسم المستخدم وكلمة المرور مطلوبة' }
+      }
+
       const user = await prisma.user.findFirst({
         where: {
           username,
-          passwordHash,
           isActive: true
         }
       })
 
       if (!user) {
-        return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' } // Invalid credentials
+        return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }
       }
 
-      // Return user without password hash
-      const { passwordHash: _, ...safeUser } = user
+      // Verify password using user's stored salt and PBKDF2
+      const userSalt = user.passwordSalt || ''
+      let isValid = false
+      if (userSalt) {
+        const computedHash = crypto.pbkdf2Sync(password, userSalt, 10000, 64, 'sha512').toString('hex')
+        isValid = (user.passwordHash === computedHash)
+      } else {
+        // Fallback for legacy simple sha256 users if they exist
+        const computedHash = crypto.createHash('sha256').update(password).digest('hex')
+        isValid = (user.passwordHash === computedHash)
+      }
+
+      if (!isValid) {
+        return { success: false, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }
+      }
+
+      // Return user without password hash/salt
+      const { passwordHash: _, passwordSalt: __, ...safeUser } = user
       await logActivity({
         userId: user.id,
         action: 'USER_LOGIN',
@@ -118,17 +135,24 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('users:create', async (_, userData) => {
     try {
       const { username, password, role, name, phone } = userData
-      const passwordHash = hashPassword(password)
+      if (!username || !password || !role || !name) {
+        return { success: false, error: 'جميع الحقول المطلوبة يجب ملؤها' }
+      }
       
       const existing = await prisma.user.findUnique({ where: { username } })
       if (existing) {
-        return { success: false, error: 'اسم المستخدم موجود بالفعل' } // Username already exists
+        return { success: false, error: 'اسم المستخدم موجود بالفعل' }
       }
+
+      // Generate unique random salt and hash password with PBKDF2
+      const salt = crypto.randomBytes(16).toString('hex')
+      const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex')
 
       const user = await prisma.user.create({
         data: {
           username,
-          passwordHash,
+          passwordHash: hash,
+          passwordSalt: salt,
           role,
           name,
           phone,
@@ -136,7 +160,7 @@ export function registerIpcHandlers(): void {
         }
       })
 
-      const { passwordHash: _, ...safeUser } = user
+      const { passwordHash: _, passwordSalt: __, ...safeUser } = user
       return { success: true, data: safeUser }
     } catch (error: any) {
       return { success: false, error: error.message }
@@ -328,21 +352,46 @@ export function registerIpcHandlers(): void {
       const { app } = require('electron')
       const path = require('path')
       const fs = require('fs')
+      const os = require('os')
       const configDir = app ? app.getPath('userData') : process.cwd()
       const configPath = path.join(configDir, 'database_config.json')
+
+      // Get local IP addresses of this host machine
+      const localIps: string[] = []
+      const nets = os.networkInterfaces()
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+          // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
+          if (net.family === 'IPv4' && !net.internal) {
+            localIps.push(net.address)
+          }
+        }
+      }
 
       if (fs.existsSync(configPath)) {
         const raw = fs.readFileSync(configPath, 'utf8')
         const parsed = JSON.parse(raw)
-        return { success: true, databaseUrl: parsed.databaseUrl }
+        return {
+          success: true,
+          databaseUrl: parsed.databaseUrl,
+          dbType: parsed.dbType || (parsed.databaseUrl.startsWith('postgresql') ? 'postgresql' : 'sqlite'),
+          localIps
+        }
       }
-      return { success: true, databaseUrl: 'postgresql://postgres:postgres@localhost:5432/pos_erp?schema=public' }
+      // Return default SQLite config
+      const defaultSqlitePath = app ? path.join(app.getPath('userData'), 'servio.db') : 'servio.db'
+      return {
+        success: true,
+        databaseUrl: `file:${defaultSqlitePath}`,
+        dbType: 'sqlite',
+        localIps
+      }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
   })
 
-  ipcMain.handle('settings:saveDbConfig', async (_, { databaseUrl }) => {
+  ipcMain.handle('settings:saveDbConfig', async (_, { databaseUrl, dbType }) => {
     try {
       const { app } = require('electron')
       const path = require('path')
@@ -351,8 +400,50 @@ export function registerIpcHandlers(): void {
       const configPath = path.join(configDir, 'database_config.json')
 
       fs.mkdirSync(configDir, { recursive: true })
-      fs.writeFileSync(configPath, JSON.stringify({ databaseUrl }, null, 2), 'utf8')
+      fs.writeFileSync(configPath, JSON.stringify({ databaseUrl, dbType }, null, 2), 'utf8')
       return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings:changeDbPassword', async (_, { oldPass, newPass, host, port, database }) => {
+    try {
+      const { Client } = require('pg')
+      const { app } = require('electron')
+      const path = require('path')
+      const fs = require('fs')
+
+      const dbHost = host || 'localhost'
+      const dbPort = port || 5432
+      const dbName = database || 'pos_erp'
+
+      // Connect to PostgreSQL server with the old (or default) password
+      const client = new Client({
+        user: 'postgres',
+        host: dbHost,
+        database: 'postgres', // connect to default maintenance DB to alter password
+        password: oldPass,
+        port: dbPort,
+      })
+
+      await client.connect()
+
+      // Alter postgres superuser password
+      // Escape password correctly to prevent SQL injection in password field
+      const escapedPassword = newPass.replace(/'/g, "''")
+      await client.query(`ALTER USER postgres WITH PASSWORD '${escapedPassword}'`)
+      await client.end()
+
+      // Save the new connection string to configuration file
+      const configDir = app ? app.getPath('userData') : process.cwd()
+      const configPath = path.join(configDir, 'database_config.json')
+      const newUrl = `postgresql://postgres:${encodeURIComponent(newPass)}@${dbHost}:${dbPort}/${dbName}?schema=public`
+
+      fs.mkdirSync(configDir, { recursive: true })
+      fs.writeFileSync(configPath, JSON.stringify({ databaseUrl: newUrl }, null, 2), 'utf8')
+
+      return { success: true, databaseUrl: newUrl }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
@@ -2224,8 +2315,38 @@ export function registerIpcHandlers(): void {
   })
 
   // --- SYSTEM RESET DATA ---
-  ipcMain.handle('settings:resetData', async () => {
+  ipcMain.handle('settings:resetData', async (_, { username, password }) => {
     try {
+      if (!username || !password) {
+        return { success: false, error: '⚠️ يجب تأكيد الهوية باستخدام اسم مستخدم وكلمة مرور المشرف لإعادة الضبط' }
+      }
+
+      // Verify that the user is an active ADMIN or MANAGER and credentials match
+      const user = await prisma.user.findFirst({
+        where: {
+          username,
+          isActive: true,
+          role: { in: ['ADMIN', 'MANAGER'] }
+        }
+      })
+
+      if (!user) {
+        return { success: false, error: '⚠️ لم يتم العثور على مشرف بهذا الاسم أو ليس لديك صلاحية' }
+      }
+
+      const userSalt = user.passwordSalt || ''
+      let isValid = false
+      if (userSalt) {
+        const computedHash = crypto.pbkdf2Sync(password, userSalt, 10000, 64, 'sha512').toString('hex')
+        isValid = (user.passwordHash === computedHash)
+      } else {
+        const computedHash = crypto.createHash('sha256').update(password).digest('hex')
+        isValid = (user.passwordHash === computedHash)
+      }
+
+      if (!isValid) {
+        return { success: false, error: '⚠️ كلمة المرور للمشرف غير صحيحة' }
+      }
       await prisma.$transaction(async (tx) => {
         await tx.salesItem.deleteMany({})
         await tx.salesInvoice.deleteMany({})

@@ -23,9 +23,10 @@ export interface ApiBridge {
   settings: {
     get: () => Promise<{ success: boolean; settings?: any; error?: string }>
     update: (data: any) => Promise<{ success: boolean; settings?: any; error?: string }>
-    resetData: () => Promise<{ success: boolean; error?: string }>
-    getDbConfig: () => Promise<{ success: boolean; databaseUrl?: string; error?: string }>
-    saveDbConfig: (data: { databaseUrl: string }) => Promise<{ success: boolean; error?: string }>
+    resetData: (data: { username: string; password: string }) => Promise<{ success: boolean; error?: string }>
+    getDbConfig: () => Promise<{ success: boolean; databaseUrl?: string; dbType?: string; localIps?: string[]; error?: string }>
+    saveDbConfig: (data: { databaseUrl: string; dbType?: string }) => Promise<{ success: boolean; error?: string }>
+    changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => Promise<{ success: boolean; databaseUrl?: string; error?: string }>
   }
   products: {
     list: () => Promise<{ success: boolean; data?: any[]; error?: string }>

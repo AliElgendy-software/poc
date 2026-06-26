@@ -1,6 +1,6 @@
 const crypto = require('crypto')
 
-const LICENSE_SECRET_SALT = 'ServioSecretLicenseKeyGeneratorSalt2026_AliElgendy'
+const LICENSE_SECRET_SALT = process.env.LICENSE_SECRET_SALT || 'ServioSecretLicenseKeyGeneratorSalt2026_AliElgendy'
 
 function generateSignature(machineId, expiryDate) {
   return crypto

@@ -12,6 +12,7 @@ model User {
   id                 String               @id @default(uuid())
   username           String               @unique
   passwordHash       String
+  passwordSalt       String               @default("")
   role               String               // "ADMIN" | "MANAGER" | "CASHIER"
   name               String
   phone              String?

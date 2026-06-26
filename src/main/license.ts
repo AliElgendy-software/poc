@@ -4,9 +4,11 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { app } from 'electron'
 
-// Secret Salt known only to the developer (Ali Elgendy) and the app
-const LICENSE_SECRET_SALT = 'ServioSecretLicenseKeyGeneratorSalt2026_AliElgendy'
-const PUBLIC_MACHINE_SALT = 'ServioPublicMachineIDFingerprintSalt2026'
+// 1. Hardcoded Developer Public Key (Ed25519) to verify licenses.
+// Since it's asymmetric, a malicious user cannot forge keys even if they decompile the source.
+const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA4fOE/8A6LxejCMAkjRnkviUSZAfKkZ42ynL1eaT3b1k=
+-----END PUBLIC KEY-----`;
 
 export interface LicenseStatus {
   activated: boolean
@@ -16,80 +18,113 @@ export interface LicenseStatus {
   statusMessageEn: string
 }
 
-// 1. Get raw system identifier
-function getRawMachineId(): string {
+// 2. Hardware Composite Fingerprint: Motherboard UUID + CPU ID + Disk Serial
+// Returns an object containing the keys.
+function getHardwareFingerprints(): { boardUuid: string; cpuId: string; diskSerial: string } {
+  let boardUuid = 'BOARD-UNKNOWN'
+  let cpuId = 'CPU-UNKNOWN'
+  let diskSerial = 'DISK-UNKNOWN'
+
   try {
     if (process.platform === 'win32') {
-      const output = execSync('reg query HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography /v MachineGuid').toString()
-      const match = output.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-      if (match) return match[0].trim()
+      // Get Motherboard UUID
+      try {
+        const out = execSync('wmic path win32_computersystemproduct get uuid').toString()
+        const lines = out.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+        if (lines.length > 1) boardUuid = lines[1]
+      } catch {}
+
+      // Get CPU Processor ID
+      try {
+        const out = execSync('wmic cpu get processorid').toString()
+        const lines = out.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+        if (lines.length > 1) cpuId = lines[1]
+      } catch {}
+
+      // Get OS Disk Serial
+      try {
+        const out = execSync('wmic diskdrive get serialnumber').toString()
+        const lines = out.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+        if (lines.length > 1) diskSerial = lines[1]
+      } catch {}
     } else if (process.platform === 'linux') {
-      if (fs.existsSync('/etc/machine-id')) {
-        return fs.readFileSync('/etc/machine-id', 'utf8').trim()
-      }
-      if (fs.existsSync('/var/lib/dbus/machine-id')) {
-        return fs.readFileSync('/var/lib/dbus/machine-id', 'utf8').trim()
-      }
-    } else if (process.platform === 'darwin') {
-      const output = execSync('ioreg -rd1 -c IOPlatformExpertDevice').toString()
-      const match = output.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)
-      if (match) return match[1].trim()
+      // Motherboard UUID
+      try {
+        if (fs.existsSync('/sys/class/dmi/id/product_uuid')) {
+          boardUuid = fs.readFileSync('/sys/class/dmi/id/product_uuid', 'utf8').trim()
+        }
+      } catch {}
+
+      // CPU ID / Model
+      try {
+        const out = fs.readFileSync('/proc/cpuinfo', 'utf8')
+        const match = out.match(/serial\s*:\s*([^\n]+)/i)
+        if (match) cpuId = match[1].trim()
+      } catch {}
+
+      // Machine ID (fallback/combo)
+      try {
+        if (fs.existsSync('/etc/machine-id')) {
+          diskSerial = fs.readFileSync('/etc/machine-id', 'utf8').trim()
+        }
+      } catch {}
     }
   } catch (err) {
-    console.error('Failed to get native machine ID, falling back to local file ID', err)
+    console.error('Failed to query hardware fingerprints:', err)
   }
 
-  // Fallback: Persistent generated ID
-  const fallbackPath = path.join(app.getPath('userData'), '.machine_id')
-  if (fs.existsSync(fallbackPath)) {
-    return fs.readFileSync(fallbackPath, 'utf8').trim()
-  } else {
-    const newId = crypto.randomUUID()
-    fs.writeFileSync(fallbackPath, newId, 'utf8')
-    return newId
-  }
+  return { boardUuid, cpuId, diskSerial }
 }
 
-// 2. Get hashed Machine ID shown to the user (16 characters uppercase)
+// 3. Composite Machine ID representation shown to the user (16 characters Uppercase)
 export function getMachineId(): string {
-  const rawId = getRawMachineId()
+  const prints = getHardwareFingerprints()
+  // Create a combined string
+  const rawCombo = `${prints.boardUuid}:${prints.cpuId}:${prints.diskSerial}`
+  
   return crypto
-    .createHmac('sha256', PUBLIC_MACHINE_SALT)
-    .update(rawId)
+    .createHash('sha256')
+    .update(rawCombo)
     .digest('hex')
     .substring(0, 16)
     .toUpperCase()
 }
 
-// 3. Helper to get license file path
+// 4. Helper to get license file path
 function getLicenseFilePath(): string {
   return path.join(app.getPath('userData'), 'license.json')
 }
 
-// 4. Generate key signature for a given machine ID and expiry date
-export function generateSignature(machineId: string, expiryDate: string): string {
-  return crypto
-    .createHmac('sha256', LICENSE_SECRET_SALT)
-    .update(`${machineId}:${expiryDate}`)
-    .digest('hex')
-    .substring(0, 16)
-    .toUpperCase()
-}
-
-// 5. Verify the license key structure and signature
-export function verifyLicenseKey(key: string, machineId: string): { valid: boolean; expiryDate?: string } {
+// 5. Verify the license key using Ed25519 Signature Verification
+export function verifyLicenseKey(licenseBase64: string, currentMachineId: string): { valid: boolean; expiryDate?: string } {
   try {
-    const parts = key.trim().split('-')
-    if (parts.length < 2) return { valid: false }
+    // The key is a Base64-encoded JSON payload + signature
+    const rawPayload = Buffer.from(licenseBase64.trim(), 'base64').toString('utf8')
+    const licenseObject = JSON.parse(rawPayload)
 
-    // Reconstruct expiryDate and signature
-    const signature = parts[parts.length - 1]
-    const expiryDate = parts.slice(0, parts.length - 1).join('-').toUpperCase() // 'LIFETIME' or 'YYYY-MM-DD'
+    const { machine_id, license_type, expires, signature } = licenseObject
+    if (!machine_id || !license_type || !signature) return { valid: false }
 
-    const expectedSignature = generateSignature(machineId, expiryDate)
-    if (signature !== expectedSignature) return { valid: false }
+    // Resolve structural match (Allow 1 of the composite parts to change or verify direct hashed machine_id)
+    // For ultimate protection and simplicity we match the currentMachineId
+    if (machine_id !== currentMachineId) {
+      return { valid: false }
+    }
 
-    return { valid: true, expiryDate }
+    // Reconstruct signed message
+    const message = `${machine_id}:${license_type}:${expires || 'LIFETIME'}`
+
+    // Verify signature with public key
+    const isVerified = crypto.verify(
+      null,
+      Buffer.from(message, 'utf8'),
+      PUBLIC_KEY_PEM,
+      Buffer.from(signature, 'hex')
+    )
+
+    if (!isVerified) return { valid: false }
+
+    return { valid: true, expiryDate: expires || 'LIFETIME' }
   } catch (err) {
     return { valid: false }
   }
@@ -128,8 +163,8 @@ export function checkLicenseStatus(): LicenseStatus {
       return {
         activated: false,
         machineId,
-        statusMessageAr: 'مفتاح التنشيط غير صالح أو تم التلاعب به.',
-        statusMessageEn: 'The activation key is invalid or has been modified.'
+        statusMessageAr: 'مفتاح التنشيط غير صالح أو لا يطابق هذا الجهاز.',
+        statusMessageEn: 'The activation key is invalid or does not match this machine.'
       }
     }
 

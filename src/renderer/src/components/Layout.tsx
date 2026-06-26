@@ -176,6 +176,12 @@ export default function Layout(): React.JSX.Element {
 
   // Database Connection Configuration State
   const [databaseUrl, setDatabaseUrl] = useState('')
+  const [dbType, setDbType] = useState<'sqlite' | 'postgresql'>('sqlite')
+  const [localIps, setLocalIps] = useState<string[]>([])
+  const [showFirstRun, setShowFirstRun] = useState(false)
+  const [firstRunPass, setFirstRunPass] = useState('')
+  const [firstRunLoading, setFirstRunLoading] = useState(false)
+  const [firstRunError, setFirstRunError] = useState('')
 
   useEffect(() => {
     const loadDbConfig = async () => {
@@ -183,6 +189,14 @@ export default function Layout(): React.JSX.Element {
         const res = await window.api.settings.getDbConfig()
         if (res.success && res.databaseUrl) {
           setDatabaseUrl(res.databaseUrl)
+          setDbType((res.dbType as 'sqlite' | 'postgresql') || (res.databaseUrl.startsWith('postgresql') ? 'postgresql' : 'sqlite'))
+          if (res.localIps) {
+            setLocalIps(res.localIps)
+          }
+          // If the connection string contains postgres:postgres (the factory defaults), trigger first-run wizard
+          if (res.databaseUrl.includes('postgres:postgres@')) {
+            setShowFirstRun(true)
+          }
         }
       } catch (err) {
         console.error('Failed to load DB config in UI:', err)
@@ -956,6 +970,11 @@ export default function Layout(): React.JSX.Element {
     if (res.success && res.user) {
       setUser(res.user)
       await fetchUserPermissions(res.user.id)
+      if (res.user.role === 'CASHIER') {
+        setActiveView('pos')
+      } else {
+        setActiveView('pos')
+      }
       triggerRefresh()
     } else {
       setLoginError(res.error || 'خطأ في المصادقة')
@@ -6187,7 +6206,12 @@ export default function Layout(): React.JSX.Element {
                 type="button"
                 onClick={async () => {
                   if (confirm(lang === 'ar' ? 'تحذير: سيتم حذف جميع الفواتير والمخازن والعملاء والحسابات والورديات بالكامل! هل أنت متأكد؟' : 'CRITICAL WARNING: This will permanently delete all shifts, sales, purchases, transfers, bank, vault, and employees data! Continue?')) {
-                    const res = await window.api.settings.resetData()
+                    const managerUser = prompt(lang === 'ar' ? 'أدخل اسم مستخدم المدير/المشرف للتأكيد:' : 'Enter Manager/Admin Username:')
+                    if (!managerUser) return
+                    const managerPass = prompt(lang === 'ar' ? 'أدخل كلمة مرور المدير/المشرف للتأكيد:' : 'Enter Manager/Admin Password:')
+                    if (!managerPass) return
+
+                    const res = await window.api.settings.resetData({ username: managerUser, password: managerPass })
                     if (res.success) {
                       alert(lang === 'ar' ? 'تمت إعادة ضبط النظام بنجاح!' : 'Database has been reset to factory defaults!')
                       triggerRefresh()
@@ -6205,42 +6229,181 @@ export default function Layout(): React.JSX.Element {
           </div>
         </div>
 
-        {/* Database Connection Settings (PostgreSQL Networking) */}
+        {/* Database Connection Settings (Dual Database Support: SQLite & PostgreSQL) */}
         <div className="col-span-12 bg-surface-container-low border border-outline-variant rounded-xl flex flex-col h-fit mt-2">
           <div className="p-4 border-b border-outline-variant bg-surface-container">
             <h2 className="font-bold flex items-center gap-2 text-sm text-primary">
               <span className="material-symbols-outlined">database</span>
-              {lang === 'ar' ? 'إعدادات ربط قواعد البيانات الشبكية والاتصال المتعدد' : 'Database Server Connection (Network DB)'}
+              {lang === 'ar' ? 'إعدادات ربط قواعد البيانات ومحرك التخزين' : 'Database Connection & Engine Settings'}
             </h2>
           </div>
           <div className="p-6">
-            <div className="max-w-2xl space-y-4">
+            <div className="max-w-2xl space-y-5">
               <p className="text-xs text-on-surface-variant leading-relaxed">
                 {lang === 'ar' 
-                  ? 'يمكنك ربط هذا الجهاز بقاعدة بيانات PostgreSQL مركزية ليعمل بشكل متزامن مع أجهزة الكاشير والإدارة الأخرى في نفس المكان.' 
-                  : 'Configure this workstation to connect to a central PostgreSQL database server on your local network.'}
+                  ? 'يدعم النظام العمل بنوعين من قواعد البيانات. اختر SQLite للعمل الفردي السريع على جهاز واحد، أو PostgreSQL للربط الشبكي بين عدة أجهزة.' 
+                  : 'The system supports two database engines. Choose SQLite for local single-device execution, or PostgreSQL for network multi-device connection.'}
               </p>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold uppercase text-on-surface-variant block">
-                  {lang === 'ar' ? 'رابط الاتصال بقاعدة البيانات (Connection String)' : 'Database Connection String'}
-                </label>
-                <input
-                  type="text"
-                  value={databaseUrl}
-                  onChange={(e) => setDatabaseUrl(e.target.value)}
-                  className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm font-mono outline-none focus:border-primary rounded"
-                  placeholder="postgresql://username:password@192.168.1.100:5432/pos_db?schema=public"
-                />
-                <span className="text-[9px] text-outline block mt-1">
-                  Format: postgresql://[user]:[password]@[server_ip]:[port]/[database_name]?schema=public
-                </span>
+
+              {/* Mode Selector Tab Buttons */}
+              <div className="flex bg-surface-container rounded-lg p-1 border border-outline-variant">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDbType('sqlite')
+                    if (!databaseUrl.startsWith('file:')) {
+                      setDatabaseUrl('file:servio.db')
+                    }
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded transition-all cursor-pointer ${
+                    dbType === 'sqlite'
+                      ? 'bg-primary text-on-primary shadow'
+                      : 'text-on-surface hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">storage</span>
+                  <span>{lang === 'ar' ? 'محلي خفيف لجهاز واحد (SQLite)' : 'Local Single-Device (SQLite)'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDbType('postgresql')
+                    if (databaseUrl.startsWith('file:') || !databaseUrl) {
+                      setDatabaseUrl('postgresql://postgres:postgres@localhost:5432/pos_erp?schema=public')
+                    }
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded transition-all cursor-pointer ${
+                    dbType === 'postgresql'
+                      ? 'bg-primary text-on-primary shadow'
+                      : 'text-on-surface hover:bg-surface-container-high'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm">lan</span>
+                  <span>{lang === 'ar' ? 'شبكة عمل لعدة أجهزة (PostgreSQL)' : 'Network Multi-Device (PostgreSQL)'}</span>
+                </button>
               </div>
+
+              {dbType === 'sqlite' ? (
+                <div className="p-4 bg-surface-container/30 border border-outline-variant/40 rounded-lg space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-success">
+                    <span className="material-symbols-outlined text-sm">offline_pin</span>
+                    <span>{lang === 'ar' ? 'وضع العمل الفردي الأوفلاين نشط حالياً' : 'Offline Single-Device Mode Active'}</span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                    {lang === 'ar' 
+                      ? 'يستخدم النظام محرك SQLite المدمج والخفيف. لا يحتاج هذا الوضع إلى تثبيت خادم قواعد بيانات خارجي ويعمل مباشرة بمرونة عالية، مما يجعله مثالياً للأجهزة الضعيفة.' 
+                      : 'The system uses the lightweight built-in SQLite engine. This mode requires zero database server installations and works out of the box, making it perfect for weak hardware.'}
+                  </p>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-on-surface-variant uppercase">{lang === 'ar' ? 'رابط ملف قاعدة البيانات' : 'Database File Location'}</label>
+                    <input
+                      type="text"
+                      value={databaseUrl}
+                      onChange={(e) => setDatabaseUrl(e.target.value)}
+                      className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-2.5 py-1.5 text-xs font-mono outline-none rounded"
+                      placeholder="file:servio.db"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* IP Addresses Display Panel */}
+                  <div className="p-4 bg-surface-container-highest rounded-lg border border-outline-variant space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-500">
+                      <span className="material-symbols-outlined text-sm">info</span>
+                      <span>{lang === 'ar' ? 'عناوين اتصال هذا الجهاز (IP Address):' : 'Local IP Addresses for this Device:'}</span>
+                    </div>
+                    {localIps && localIps.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {localIps.map((ip) => (
+                          <div key={ip} className="flex items-center gap-2 bg-background border border-outline-variant/60 px-3 py-1.5 rounded text-xs font-mono font-bold text-white">
+                            <span>{ip}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(ip)
+                                alert(lang === 'ar' ? 'تم نسخ عنوان الـ IP!' : 'IP address copied!')
+                              }}
+                              className="text-[10px] text-primary hover:text-white transition-colors underline cursor-pointer"
+                            >
+                              {lang === 'ar' ? 'نسخ' : 'Copy'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-outline font-medium italic">{lang === 'ar' ? 'لم يتم العثور على عناوين IP محلية. يرجى التحقق من اتصال كابل الشبكة أو الواي فاي.' : 'No local IP addresses detected. Please verify ethernet or Wi-Fi connectivity.'}</p>
+                    )}
+                  </div>
+
+                  {/* Helper Input for Simple IP Config */}
+                  <div className="p-4 bg-surface-container/30 border border-outline-variant/40 rounded-lg space-y-3">
+                    <div className="text-xs font-bold text-on-surface">
+                      {lang === 'ar' ? 'إعداد سريع: الاتصال المباشر عبر الـ IP' : 'Quick Setup: Direct Connect to IP'}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-on-surface-variant uppercase">{lang === 'ar' ? 'عنوان IP السيرفر الرئيسي' : 'Server IP Address'}</label>
+                        <input
+                          type="text"
+                          id="quick-server-ip"
+                          placeholder="192.168.1.50"
+                          className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary rounded"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-on-surface-variant uppercase">{lang === 'ar' ? 'كلمة مرور السيرفر' : 'Server DB Password'}</label>
+                        <input
+                          type="password"
+                          id="quick-server-pass"
+                          placeholder="••••••••"
+                          className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-2.5 py-1.5 text-xs outline-none focus:border-primary rounded"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ipInput = document.getElementById('quick-server-ip') as HTMLInputElement | null;
+                        const passInput = document.getElementById('quick-server-pass') as HTMLInputElement | null;
+                        const serverIp = ipInput?.value?.trim() || 'localhost';
+                        const dbPass = passInput?.value || 'postgres';
+                        // Auto-construct connection string
+                        const constructedUrl = `postgresql://postgres:${dbPass}@${serverIp}:5432/pos_erp?schema=public`;
+                        setDatabaseUrl(constructedUrl);
+                        alert(lang === 'ar' ? 'تم إنشاء رابط الاتصال تلقائياً! يرجى الضغط على حفظ أدناه.' : 'Connection string generated! Click Save below.');
+                      }}
+                      className="w-full bg-secondary-container/45 hover:bg-secondary-container border border-outline-variant/80 text-white font-bold text-xs py-1.5 rounded transition-all cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'توليد رابط الاتصال تلقائياً' : 'Auto Generate Connection String'}
+                    </button>
+                  </div>
+
+                  {/* Full Connection String Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold uppercase text-on-surface-variant block">
+                      {lang === 'ar' ? 'رابط الاتصال النهائي المكتوب (Connection String)' : 'Final Database Connection String'}
+                    </label>
+                    <input
+                      type="text"
+                      value={databaseUrl}
+                      onChange={(e) => setDatabaseUrl(e.target.value)}
+                      className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm font-mono outline-none focus:border-primary rounded"
+                      placeholder="postgresql://username:password@192.168.1.100:5432/pos_db?schema=public"
+                    />
+                    <span className="text-[9px] text-outline block mt-1">
+                      Format: postgresql://[user]:[password]@[server_ip]:[port]/[database_name]?schema=public
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={async () => {
                     if (!databaseUrl) return
-                    const res = await window.api.settings.saveDbConfig({ databaseUrl })
+                    const res = await window.api.settings.saveDbConfig({ databaseUrl, dbType })
                     if (res.success) {
                       alert(lang === 'ar' 
                         ? 'تم حفظ إعدادات الاتصال بنجاح! يرجى إعادة تشغيل التطبيق لتطبيق الاتصال الجديد.' 
@@ -6251,7 +6414,7 @@ export default function Layout(): React.JSX.Element {
                   }}
                   className="bg-primary text-on-primary px-5 py-2 rounded font-bold text-xs hover:brightness-110 active:scale-95 transition-all cursor-pointer"
                 >
-                  {lang === 'ar' ? 'حفظ إعدادات الاتصال' : 'Save DB Config'}
+                  {lang === 'ar' ? 'حفظ إعدادات الاتصال' : 'Save Connection Config'}
                 </button>
               </div>
             </div>
@@ -8174,6 +8337,114 @@ export default function Layout(): React.JSX.Element {
     )
   }
 
+  // Change PostgreSQL password on first run
+  const handleFirstRunSetup = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!firstRunPass || firstRunPass.length < 4) {
+      setFirstRunError(lang === 'ar' ? 'يجب أن تكون كلمة المرور 4 أحرف أو أكثر' : 'Password must be at least 4 characters')
+      return
+    }
+    setFirstRunLoading(true)
+    setFirstRunError('')
+    // Assume default old password is 'postgres' which is configured during silent installation
+    const res = await window.api.settings.changeDbPassword({
+      oldPass: 'postgres',
+      newPass: firstRunPass,
+      host: 'localhost',
+      port: 5432,
+      database: 'pos_erp'
+    })
+    setFirstRunLoading(false)
+    if (res.success) {
+      alert(lang === 'ar' ? 'تم إعداد قاعدة البيانات بنجاح! يرجى إعادة تشغيل التطبيق لتطبيق التغييرات.' : 'Database configured successfully! Please restart the app.')
+      setShowFirstRun(false)
+    } else {
+      setFirstRunError(res.error || 'فشل الاتصال أو تغيير كلمة المرور')
+    }
+  }
+
+  if (showFirstRun) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#0b1326] p-4 font-sans relative overflow-hidden" dir={direction}>
+        <div className="absolute top-1/4 left-1/4 w-[35rem] h-[35rem] bg-primary-container/10 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-1/4 right-1/4 w-[35rem] h-[35rem] bg-secondary/5 rounded-full blur-[150px] pointer-events-none" />
+
+        <div className="w-full max-w-md bg-surface-container/60 backdrop-blur-xl border border-outline-variant rounded-xl p-8 shadow-2xl relative text-on-surface">
+          <div className="flex flex-col items-center mb-6">
+            <div className="w-16 h-16 bg-gradient-to-tr from-primary to-secondary rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-primary-container/40">
+              <span className="material-symbols-outlined text-white text-3xl font-black">dns</span>
+            </div>
+            <h1 className="text-xl font-extrabold text-on-surface tracking-tight text-center">
+              {lang === 'ar' ? 'إعداد قاعدة البيانات لأول مرة' : 'First-time Database Setup'}
+            </h1>
+            <p className="text-xs text-on-surface-variant text-center mt-2 leading-relaxed">
+              {lang === 'ar' 
+                ? 'تم كشف تثبيت خادم PostgreSQL جديد. يرجى تعيين كلمة مرور قوية لحماية قاعدة بيانات المحل الخاصة بك.'
+                : 'A new PostgreSQL server installation was detected. Please set a secure password to protect your database.'}
+            </p>
+          </div>
+
+          <form onSubmit={handleFirstRunSetup} className="space-y-4">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-on-surface-variant">{lang === 'ar' ? 'كلمة مرور مدير قاعدة البيانات الجديدة' : 'New DB Manager Password'}</label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="material-symbols-outlined text-outline text-lg">lock</span>
+                </span>
+                <input
+                  type="password"
+                  required
+                  value={firstRunPass}
+                  onChange={(e) => setFirstRunPass(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant focus:border-primary text-on-surface rounded-lg py-2 pl-10 pr-4 outline-none transition-all text-sm font-medium"
+                  placeholder="••••••••"
+                />
+              </div>
+              <span className="text-[10px] text-outline block mt-1">
+                {lang === 'ar' ? 'هذه الكلمة ستحمي بياناتك وسيتم استخدامها لتوصيل أجهزة الكاشير الأخرى.' : 'This password will protect your database and link other client workstations.'}
+              </span>
+            </div>
+
+            {firstRunError && (
+              <p className="text-error text-xs text-center font-medium bg-error-container/20 border border-error-container/30 py-2 rounded-lg">
+                {firstRunError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={firstRunLoading}
+              className="w-full py-2.5 bg-primary text-on-primary font-bold rounded-lg shadow-lg hover:bg-primary-fixed-dim transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+            >
+              {firstRunLoading ? (
+                <>
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  <span>{lang === 'ar' ? 'جاري الحفظ وإعداد الخادم...' : 'Configuring server...'}</span>
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-sm">rocket_launch</span>
+                  <span>{lang === 'ar' ? 'حفظ وإعداد النظام للعمل' : 'Save & Configure Server'}</span>
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Language toggle */}
+          <div className="flex justify-center mt-6 pt-6 border-t border-outline-variant">
+            <button
+              onClick={() => setLang(prev => prev === 'ar' ? 'en' : 'ar')}
+              className="text-xs text-on-surface-variant hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-primary text-sm">language</span>
+              {lang === 'ar' ? 'Switch to English' : 'تغيير إلى العربية'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (!user) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background p-4 font-sans relative overflow-hidden" dir={direction}>
@@ -8263,11 +8534,12 @@ export default function Layout(): React.JSX.Element {
   return (
     <div className="flex h-screen w-screen bg-background text-on-background select-none overflow-hidden font-body-md" dir={direction}>
       {/* 1. Sidebar Navigation */}
-      <aside className={`h-screen w-64 fixed top-0 bg-surface-container border-outline-variant flex flex-col py-4 z-50 ${
-        lang === 'ar'
-          ? 'right-0 border-l'
-          : 'left-0 border-r'
-      }`}>
+      {user.role !== 'CASHIER' && (
+        <aside className={`h-screen w-64 fixed top-0 bg-surface-container border-outline-variant flex flex-col py-4 z-50 ${
+          lang === 'ar'
+            ? 'right-0 border-l'
+            : 'left-0 border-r'
+        }`}>
         <div className="px-6 mb-8 flex flex-col gap-1">
           <h1 className="font-headline-md text-lg font-bold text-primary flex items-center gap-2">
             <span className="material-symbols-outlined text-primary text-2xl font-black">point_of_sale</span>
@@ -8466,10 +8738,13 @@ export default function Layout(): React.JSX.Element {
           </button>
         </div>
       </aside>
+      )}
 
       {/* 2. Main Container (Header + Content + Footer) */}
       <main className={`flex-1 flex flex-col h-full overflow-hidden transition-all duration-200 ${
-        lang === 'ar' ? 'mr-64 ml-0' : 'ml-64 mr-0'
+        user.role === 'CASHIER'
+          ? 'm-0'
+          : lang === 'ar' ? 'mr-64 ml-0' : 'ml-64 mr-0'
       }`}>
         {/* Header Bar */}
         <header className="h-12 bg-surface-container-high border-b border-outline-variant flex items-center justify-between px-4 z-30">

@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>منشئ تراخيص سيرفيو | Servio License Keygen</title>
+  <style>
+    :root {
+      --bg: #0b1329;
+      --card-bg: #111e3f;
+      --primary: #00f0ff;
+      --secondary: #bd00ff;
+      --text: #ffffff;
+      --text-muted: #8b9bb4;
+      --outline: #223762;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      background-color: var(--card-bg);
+      border: 1px solid var(--outline);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 500px;
+      padding: 30px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      position: relative;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 800;
+      background: linear-gradient(to left, #fff, var(--primary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: bold;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      background-color: rgba(255,255,255,0.03);
+      border: 1px solid var(--outline);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      transition: all 0.3s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+    }
+
+    button.btn-generate {
+      width: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      transition: all 0.3s;
+    }
+
+    button.btn-generate:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .output-section {
+      margin-top: 25px;
+      display: none;
+    }
+
+    .key-box-wrapper {
+      position: relative;
+    }
+
+    textarea.key-output {
+      width: 100%;
+      height: 110px;
+      background-color: #060b17;
+      border: 1px solid var(--outline);
+      color: var(--primary);
+      font-size: 11px;
+      padding: 12px;
+      border-radius: 8px;
+      resize: none;
+      outline: none;
+      direction: ltr;
+      text-align: left;
+      line-height: 1.4;
+    }
+
+    button.btn-copy {
+      position: absolute;
+      left: 8px;
+      bottom: 8px;
+      background: var(--outline);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button.btn-copy:hover {
+      background: var(--primary);
+      color: var(--bg);
+    }
+
+    .info-bar {
+      margin-top: 12px;
+      padding: 8px 12px;
+      background-color: rgba(0, 240, 255, 0.05);
+      border-right: 3px solid var(--primary);
+      border-radius: 4px;
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>منشئ تراخيص نظام سيرفيو المطور</h1>
+      <p class="subtitle">إنشاء تراخيص أوفلاين مؤمنة بالتوقيع الرقمي Ed25519</p>
+    </header>
+
+    <div class="form-group">
+      <label for="machine-id">كود جهاز العميل (Machine ID)</label>
+      <input 
+        type="text" 
+        id="machine-id" 
+        maxlength="16"
+        placeholder="أدخل كود الـ 16 حرفاً المعروض لدى العميل"
+        style="text-transform: uppercase;"
+      >
+    </div>
+
+    <div class="form-group">
+      <label for="license-type">نوع وصلاحية الترخيص</label>
+      <select id="license-type" onchange="toggleDurationGroup()">
+        <option value="lifetime">مدى الحياة (Lifetime)</option>
+        <option value="trial">نسخة تجريبية مؤقتة (Trial)</option>
+      </select>
+    </div>
+
+    <div class="form-group" id="duration-group" style="display: none;">
+      <label for="trial-days">عدد الأيام التجريبية</label>
+      <input type="number" id="trial-days" value="30" min="1">
+    </div>
+
+    <button type="button" class="btn-generate" onclick="generateLicenseKey()">إنشاء مفتاح التنشيط</button>
+
+    <div class="output-section" id="output-section">
+      <label>مفتاح التنشيط الجاهز (انسخه وأرسله للعميل)</label>
+      <div class="key-box-wrapper">
+        <textarea class="key-output" id="key-output" readonly></textarea>
+        <button type="button" class="btn-copy" onclick="copyKey()">نسخ المفتاح</button>
+      </div>
+      <div class="info-bar" id="info-summary"></div>
+    </div>
+  </div>
+
+  <script>
+    const nacl = require('tweetnacl');
+
+    // Hex converters
+    function hexToBytes(hex) {
+      let bytes = [];
+      for (let c = 0; c < hex.length; c += 2)
+        bytes.push(parseInt(hex.substr(c, 2), 16));
+      return new Uint8Array(bytes);
+    }
+    
+    function bytesToHex(bytes) {
+      let hex = [];
+      for (let i = 0; i < bytes.length; i++) {
+        let current = bytes[i].toString(16);
+        hex.push(current.length === 1 ? '0' + current : current);
+      }
+      return hex.join('');
+    }
+
+    // Custom Developer Private Key Hex (Derived seed)
+    const SEED_HEX = "af30f47a8b9fbeb818228be37c49d5ee7fdee7bc4fba6ee01438982de26235e9";
+
+    function toggleDurationGroup() {
+      const type = document.getElementById('license-type').value;
+      const group = document.getElementById('duration-group');
+      group.style.display = type === 'trial' ? 'block' : 'none';
+    }
+
+    function generateLicenseKey() {
+      const machineId = document.getElementById('machine-id').value.trim().toUpperCase();
+      if (machineId.length !== 16) {
+        alert('يرجى إدخال كود جهاز صحيح مكون من 16 حرفاً.');
+        return;
+      }
+
+      const type = document.getElementById('license-type').value;
+      let expires = 'LIFETIME';
+      let licenseType = 'lifetime';
+
+      if (type === 'trial') {
+        const days = parseInt(document.getElementById('trial-days').value) || 30;
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        expires = d.toISOString().split('T')[0];
+        licenseType = 'trial';
+      }
+
+      // Reconstruct message and sign
+      const message = `${machineId}:${licenseType}:${expires}`;
+      const msgBytes = new TextEncoder().encode(message);
+
+      const seedBytes = hexToBytes(SEED_HEX);
+      const keyPair = nacl.sign.keyPair.fromSeed(seedBytes);
+      const signatureBytes = nacl.sign.detached(msgBytes, keyPair.secretKey);
+      const signatureHex = bytesToHex(signatureBytes);
+
+      // Build JSON payload
+      const licenseObj = {
+        machine_id: machineId,
+        license_type: licenseType,
+        expires: expires === 'LIFETIME' ? null : expires,
+        signature: signatureHex
+      };
+
+      // Base64 output
+      const keyJson = JSON.stringify(licenseObj);
+      const keyBase64 = btoa(unescape(encodeURIComponent(keyJson)));
+
+      document.getElementById('key-output').value = keyBase64;
+      document.getElementById('output-section').style.display = 'block';
+
+      document.getElementById('info-summary').innerHTML = 
+        `الترخيص: <strong>${licenseType === 'lifetime' ? 'مدى الحياة' : 'نسخة تجريبية'}</strong><br/>` +
+        `تاريخ الانتهاء: <strong>${expires === 'LIFETIME' ? 'مفتوح' : expires}</strong><br/>` +
+        `كود الجهاز: <strong>${machineId}</strong>`;
+    }
+
+    function copyKey() {
+      const textarea = document.getElementById('key-output');
+      textarea.select();
+      document.execCommand('copy');
+      alert('تم النسخ إلى الحافظة بنجاح!');
+    }
+  </script>
+</body>
+</html>

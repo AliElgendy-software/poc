@@ -25,9 +25,10 @@ const api = {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     update: (data) => ipcRenderer.invoke('settings:update', data),
-    resetData: () => ipcRenderer.invoke('settings:resetData'),
+    resetData: (data: { username: string; password: string }) => ipcRenderer.invoke('settings:resetData', data),
     getDbConfig: () => ipcRenderer.invoke('settings:getDbConfig'),
-    saveDbConfig: (data: { databaseUrl: string }) => ipcRenderer.invoke('settings:saveDbConfig', data)
+    saveDbConfig: (data: { databaseUrl: string }) => ipcRenderer.invoke('settings:saveDbConfig', data),
+    changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => ipcRenderer.invoke('settings:changeDbPassword', data)
   },
   products: {
     list: () => ipcRenderer.invoke('products:list'),

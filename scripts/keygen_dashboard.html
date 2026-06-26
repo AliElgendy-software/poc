@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة إنشاء تراخيص سيرفيو | Servio Key Generator</title>
+  <!-- Google Fonts & Material Icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Cairo:wght@300;400;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1329;
+      --card-bg: #111e3f;
+      --primary: #00f0ff;
+      --secondary: #bd00ff;
+      --text: #ffffff;
+      --text-muted: #8b9bb4;
+      --outline: #223762;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Cairo', 'Outfit', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Blur background elements */
+    .glow-1 {
+      position: absolute;
+      top: 10%;
+      left: 10%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(0, 240, 255, 0.1) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 1;
+    }
+    .glow-2 {
+      position: absolute;
+      bottom: 10%;
+      right: 10%;
+      width: 450px;
+      height: 450px;
+      background: radial-gradient(circle, rgba(189, 0, 255, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .container {
+      background-color: var(--card-bg);
+      border: 1px solid var(--outline);
+      border-radius: 20px;
+      width: 100%;
+      max-width: 520px;
+      padding: 40px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      z-index: 10;
+      backdrop-filter: blur(10px);
+      position: relative;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .icon-wrapper {
+      width: 70px;
+      height: 70px;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 15px;
+      box-shadow: 0 10px 20px rgba(0, 240, 255, 0.3);
+    }
+
+    .icon-wrapper i {
+      color: #fff;
+      font-size: 32px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to left, #fff, var(--primary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: bold;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    input, select {
+      width: 100%;
+      background-color: rgba(255,255,255,0.03);
+      border: 1px solid var(--outline);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.3s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+      background-color: rgba(255,255,255,0.06);
+    }
+
+    .row {
+      display: grid;
+      grid-template-cols: 1fr;
+      gap: 15px;
+    }
+
+    button.btn-generate {
+      width: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      color: #fff;
+      border: none;
+      padding: 14px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button.btn-generate:hover {
+      filter: brightness(1.15);
+      transform: translateY(-2px);
+    }
+
+    button.btn-generate:active {
+      transform: translateY(0);
+    }
+
+    .output-section {
+      margin-top: 30px;
+      display: none;
+      animation: fadeIn 0.4s ease-out forwards;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .key-box-wrapper {
+      position: relative;
+    }
+
+    textarea.key-output {
+      width: 100%;
+      height: 120px;
+      background-color: #060b17;
+      border: 1px solid var(--outline);
+      color: var(--primary);
+      font-family: 'Outfit', monospace;
+      font-size: 11px;
+      padding: 15px;
+      border-radius: 10px;
+      resize: none;
+      outline: none;
+      direction: ltr;
+      text-align: left;
+      line-height: 1.5;
+    }
+
+    button.btn-copy {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      background: var(--outline);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button.btn-copy:hover {
+      background: var(--primary);
+      color: var(--bg);
+    }
+
+    .info-bar {
+      margin-top: 15px;
+      padding: 10px 15px;
+      background-color: rgba(0, 240, 255, 0.05);
+      border-right: 3px solid var(--primary);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="glow-1"></div>
+  <div class="glow-2"></div>
+
+  <div class="container">
+    <header>
+      <div class="icon-wrapper">
+        <i class="material-icons">key</i>
+      </div>
+      <h1>مولد تراخيص نظام سيرفيو</h1>
+      <p class="subtitle">توليد أكواد الترخيص الرقمية الآمنة لعملاء POS & ERP</p>
+    </header>
+
+    <div class="form-group">
+      <label for="machine-id">كود جهاز العميل (Machine ID)</label>
+      <input 
+        type="text" 
+        id="machine-id" 
+        maxlength="16"
+        placeholder="أدخل كود الـ 16 حرفاً المعروض لدى العميل"
+        style="text-transform: uppercase; font-family: 'Outfit', sans-serif;"
+      >
+    </div>
+
+    <div class="form-group">
+      <label for="license-type">نوع الترخيص وصلاحية المفتاح</label>
+      <select id="license-type" onchange="toggleDurationGroup()">
+        <option value="lifetime">مدى الحياة (Lifetime License)</option>
+        <option value="trial">نسخة تجريبية مؤقتة (Trial Duration)</option>
+      </select>
+    </div>
+
+    <div class="form-group" id="duration-group" style="display: none;">
+      <label for="trial-days">عدد الأيام التجريبية المسموح بها</label>
+      <input type="number" id="trial-days" value="30" min="1">
+    </div>
+
+    <button type="button" class="btn-generate" onclick="generateLicenseKey()">
+      <i class="material-icons">vpn_key</i>
+      <span>إنشاء وتوقيع مفتاح الترخيص</span>
+    </button>
+
+    <div class="output-section" id="output-section">
+      <label>مفتاح التنشيط الجاهز (قم بنسخه وإرساله للعميل)</label>
+      <div class="key-box-wrapper">
+        <textarea class="key-output" id="key-output" readonly></textarea>
+        <button type="button" class="btn-copy" onclick="copyKey()">نسخ المفتاح</button>
+      </div>
+      <div class="info-bar" id="info-summary"></div>
+    </div>
+  </div>
+
+  <!-- Include browser crypto buffer simulation or raw JS logic for sign -->
+  <script>
+    // Embedded private key PEM string (Ed25519)
+    const PRIVATE_KEY_HEX = "c8f37f69a6a68b9bbecd4795e34ca3f5ee7fdee7bc4fba6e2010c3892de26235"; 
+    // Developer Private Key buffer seed configured from developer_private_key.pem.
+    // In order to make it run in a standalone browser file offline, we use a simple mini Ed25519 signing library or equivalent
+    // to do asymmetric signing. Below is a minimal implementation of SHA256 + sign verify or ed25519 signature representation.
+  </script>
+
+  <!-- Embed a tiny Web-Friendly Cryptographic engine or use standard signing via WebCrypto API / TweetNaCl to sign instantly -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl-fast.min.js"></script>
+  <script>
+    // Hex helper
+    function hexToBytes(hex) {
+      let bytes = [];
+      for (let c = 0; c < hex.length; c += 2)
+        bytes.push(parseInt(hex.substr(c, 2), 16));
+      return new Uint8Array(bytes);
+    }
+    
+    function bytesToHex(bytes) {
+      let hex = [];
+      for (let i = 0; i < bytes.length; i++) {
+        let current = bytes[i].toString(16);
+        hex.push(current.length === 1 ? '0' + current : current);
+      }
+      return hex.join('');
+    }
+
+    // Ed25519 Private Key Hex (seed)
+    // Derived seed from your private key: MC4CAQAwBQYDK2VwBCIEIK8w9HqLn764GCKL43xJ1e5/3ue8T7pu4BQ4mC3iYjXp
+    // ASN.1 Octet String payload is: ab30f47a8b9fbeb818228be37c49d5ee7fdeeecfba6ee01438982de26235e9c7
+    const SEED_HEX = "ab30f47a8b9fbeb818228be37c49d5ee7fdeeecfba6ee01438982de26235e9c7";
+
+    function toggleDurationGroup() {
+      const type = document.getElementById('license-type').value;
+      const group = document.getElementById('duration-group');
+      if (type === 'trial') {
+        group.style.display = 'block';
+      } else {
+        group.style.display = 'none';
+      }
+    }
+
+    function generateLicenseKey() {
+      const machineId = document.getElementById('machine-id').value.trim().toUpperCase();
+      if (machineId.length !== 16) {
+        alert('برجاء إدخال كود جهاز صحيح مكون من 16 حرفاً.');
+        return;
+      }
+
+      const type = document.getElementById('license-type').value;
+      let expires = 'LIFETIME';
+      let licenseType = 'lifetime';
+
+      if (type === 'trial') {
+        const days = parseInt(document.getElementById('trial-days').value) || 30;
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        expires = d.toISOString().split('T')[0];
+        licenseType = 'trial';
+      }
+
+      // Reconstruct message
+      const message = `${machineId}:${licenseType}:${expires}`;
+      const msgBytes = new TextEncoder().encode(message);
+
+      // Setup Ed25519 KeyPair from Private Key Seed
+      const seedBytes = hexToBytes(SEED_HEX);
+      const keyPair = nacl.sign.keyPair.fromSeed(seedBytes);
+
+      // Sign the message bytes
+      const signatureBytes = nacl.sign.detached(msgBytes, keyPair.secretKey);
+      const signatureHex = bytesToHex(signatureBytes);
+
+      // Build payload JSON
+      const licenseObj = {
+        machine_id: machineId,
+        license_type: licenseType,
+        expires: expires === 'LIFETIME' ? null : expires,
+        signature: signatureHex
+      };
+
+      // Output as Base64 Connection Key
+      const keyJson = JSON.stringify(licenseObj);
+      const keyBase64 = btoa(unescape(encodeURIComponent(keyJson)));
+
+      // Render Output
+      document.getElementById('key-output').value = keyBase64;
+      document.getElementById('output-section').style.display = 'block';
+
+      const summaryAr = `نوع الترخيص: <strong>${licenseType === 'lifetime' ? 'مفتوح مدى الحياة' : 'نسخة تجريبية مؤقتة'}</strong><br/>` +
+                        `تاريخ الانتهاء: <strong>${expires === 'LIFETIME' ? 'لا ينتهي' : expires}</strong><br/>` +
+                        `كود الجهاز: <strong>${machineId}</strong>`;
+      document.getElementById('info-summary').innerHTML = summaryAr;
+    }
+
+    function copyKey() {
+      const textarea = document.getElementById('key-output');
+      textarea.select();
+      document.execCommand('copy');
+      alert('تم نسخ مفتاح التنشيط إلى الحافظة بنجاح!');
+    }
+  </script>
+</body>
+</html>

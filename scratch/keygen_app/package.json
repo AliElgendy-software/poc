@@ -1,0 +1,28 @@
+{
+  "name": "servio-keygen",
+  "version": "1.0.0",
+  "description": "Servio POS & ERP License Key Generator",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.servio.keygen",
+    "productName": "ServioKeygen",
+    "win": {
+      "target": "portable"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
