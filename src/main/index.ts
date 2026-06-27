@@ -45,30 +45,29 @@ app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // Initialize DB and register IPC Handlers
-  try {
-    await initializeDatabase()
-  } catch (error) {
-    console.error('Failed to initialize database on startup:', error)
-  }
-  
+  // Register IPC Handlers FIRST so db:getStatus works even if DB init fails
   registerIpcHandlers()
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
 
+  // Try to initialize DB — but don't block window creation
+  // The frontend will show an error screen via db:getStatus if it fails
+  initializeDatabase()
+    .then(() => {
+      console.log('[App] Database initialized successfully.')
+    })
+    .catch((error) => {
+      console.error('[App] Database initialization failed (UI will show error):', error?.message || error)
+    })
+
   createWindow()
 
   app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })

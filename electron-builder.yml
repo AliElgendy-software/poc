@@ -12,6 +12,9 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - 'node_modules/.prisma/**/*'
   - 'node_modules/@prisma/client/**/*'
+  - 'node_modules/@prisma/client-sqlite/**/*'
+  - 'node_modules/@prisma/client-postgresql/**/*'
+  - 'node_modules/@prisma/engines/**/*'
 asarUnpack:
   - resources/**
   - "**/*.node"
@@ -19,19 +22,30 @@ asarUnpack:
   - "**/@prisma/engines/**"
   - "node_modules/.prisma/**"
   - "node_modules/@prisma/client/**"
-  - "out/main/generated/**"
+  - "node_modules/@prisma/client-sqlite/**"
+  - "node_modules/@prisma/client-postgresql/**"
+  - "node_modules/@prisma/engines/**"
 extraResources:
   - from: "node_modules/.prisma/client"
     to: "node_modules/.prisma/client"
   - from: "node_modules/@prisma/client"
     to: "node_modules/@prisma/client"
+  - from: "node_modules/@prisma/client-sqlite"
+    to: "node_modules/@prisma/client-sqlite"
+  - from: "node_modules/@prisma/client-postgresql"
+    to: "node_modules/@prisma/client-postgresql"
+  - from: "node_modules/@prisma/engines"
+    to: "node_modules/@prisma/engines"
   - from: "prisma"
     to: "prisma"
-  - from: "src/main/generated"
-    to: "generated"
+  - from: "src/main/schema.sql"
+    to: "schema.sql"
 win:
   executableName: servio
 nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false # Install for current user but allow changing path (standard wizard)
   artifactName: ${productName}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}

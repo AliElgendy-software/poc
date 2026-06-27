@@ -183,26 +183,69 @@ export default function Layout(): React.JSX.Element {
   const [firstRunLoading, setFirstRunLoading] = useState(false)
   const [firstRunError, setFirstRunError] = useState('')
 
+  // Database status states
+  const [dbStatus, setDbStatus] = useState<{ success: boolean; error: string | null; dbType: string; databaseUrl: string } | null>(null)
+  const [dbStatusLoading, setDbStatusLoading] = useState(true)
+
   useEffect(() => {
-    const loadDbConfig = async () => {
-      try {
-        const res = await window.api.settings.getDbConfig()
-        if (res.success && res.databaseUrl) {
-          setDatabaseUrl(res.databaseUrl)
-          setDbType((res.dbType as 'sqlite' | 'postgresql') || (res.databaseUrl.startsWith('postgresql') ? 'postgresql' : 'sqlite'))
-          if (res.localIps) {
-            setLocalIps(res.localIps)
+    const checkDbAndLoad = async () => {
+      // Poll until DB is ready (or fails definitively)
+      const maxRetries = 15
+      const retryDelay = 1500 // ms
+      let lastStatus: any = null
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const status = await window.api.db.getStatus()
+          lastStatus = status
+
+          if (status.success) {
+            // DB is ready!
+            setDbStatus(status)
+            setDbStatusLoading(false)
+            const res = await window.api.settings.getDbConfig()
+            if (res.success && res.databaseUrl) {
+              setDatabaseUrl(res.databaseUrl)
+              setDbType((res.dbType as 'sqlite' | 'postgresql') || (res.databaseUrl.startsWith('postgresql') ? 'postgresql' : 'sqlite'))
+              if (res.localIps) setLocalIps(res.localIps)
+              if (res.databaseUrl.includes('postgres:postgres@')) setShowFirstRun(true)
+            }
+            return
           }
-          // If the connection string contains postgres:postgres (the factory defaults), trigger first-run wizard
-          if (res.databaseUrl.includes('postgres:postgres@')) {
-            setShowFirstRun(true)
+
+          // DB has an error — but maybe it's still initializing (dbInitError was null when queried)
+          // Wait and retry if error is null (means still loading)
+          if (!status.error && attempt < maxRetries - 1) {
+            await new Promise(r => setTimeout(r, retryDelay))
+            continue
+          }
+
+          // Error is set or max retries reached
+          if (attempt === maxRetries - 1 || status.error) {
+            // Final state — show error
+            setDbStatus(status)
+            setDbStatusLoading(false)
+            const res = await window.api.settings.getDbConfig()
+            if (res.success && res.databaseUrl) {
+              setDatabaseUrl(res.databaseUrl)
+              setDbType((res.dbType as 'sqlite' | 'postgresql') || (res.databaseUrl.startsWith('postgresql') ? 'postgresql' : 'sqlite'))
+            }
+            return
+          }
+
+          await new Promise(r => setTimeout(r, retryDelay))
+        } catch (err) {
+          if (attempt === maxRetries - 1) {
+            console.error('Failed to load database status:', err)
+            setDbStatus({ success: false, error: String(err), dbType: 'sqlite', databaseUrl: '' })
+            setDbStatusLoading(false)
+          } else {
+            await new Promise(r => setTimeout(r, retryDelay))
           }
         }
-      } catch (err) {
-        console.error('Failed to load DB config in UI:', err)
       }
     }
-    loadDbConfig()
+    checkDbAndLoad()
   }, [])
 
   // Dark/Light Theme state
@@ -6398,25 +6441,49 @@ export default function Layout(): React.JSX.Element {
                 </div>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 flex-wrap">
+                {/* Test Connection Button */}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!databaseUrl) return alert(lang === 'ar' ? 'أدخل رابط الاتصال أولاً' : 'Enter connection URL first')
+                    const btn = document.getElementById('btn-test-conn') as HTMLButtonElement
+                    if (btn) { btn.disabled = true; btn.textContent = lang === 'ar' ? '⏳ جاري الاختبار...' : '⏳ Testing...' }
+                    try {
+                      const res = await window.api.settings.testDbConnection({ databaseUrl, dbType })
+                      alert(res.messageAr || (res.success ? '✅ الاتصال ناجح' : '❌ فشل الاتصال'))
+                    } catch (e: any) {
+                      alert('❌ ' + e.message)
+                    } finally {
+                      if (btn) { btn.disabled = false; btn.textContent = lang === 'ar' ? '🔌 اختبار الاتصال' : '🔌 Test Connection' }
+                    }
+                  }}
+                  id="btn-test-conn"
+                  className="bg-secondary text-on-secondary px-5 py-2 rounded font-bold text-xs hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                >
+                  {lang === 'ar' ? '🔌 اختبار الاتصال' : '🔌 Test Connection'}
+                </button>
+
+                {/* Save Config Button */}
                 <button
                   type="button"
                   onClick={async () => {
                     if (!databaseUrl) return
                     const res = await window.api.settings.saveDbConfig({ databaseUrl, dbType })
                     if (res.success) {
-                      alert(lang === 'ar' 
-                        ? 'تم حفظ إعدادات الاتصال بنجاح! يرجى إعادة تشغيل التطبيق لتطبيق الاتصال الجديد.' 
-                        : 'Database configuration saved! Please restart the application to connect to the new database server.')
+                      alert(lang === 'ar'
+                        ? '✅ تم حفظ إعدادات الاتصال بنجاح!\nيرجى إعادة تشغيل التطبيق لتطبيق الإعدادات الجديدة.'
+                        : '✅ Database configuration saved!\nPlease restart the application to apply the new settings.')
                     } else {
-                      alert(res.error)
+                      alert('❌ ' + res.error)
                     }
                   }}
                   className="bg-primary text-on-primary px-5 py-2 rounded font-bold text-xs hover:brightness-110 active:scale-95 transition-all cursor-pointer"
                 >
-                  {lang === 'ar' ? 'حفظ إعدادات الاتصال' : 'Save Connection Config'}
+                  {lang === 'ar' ? '💾 حفظ إعدادات الاتصال' : '💾 Save Connection Config'}
                 </button>
               </div>
+
             </div>
           </div>
         </div>
@@ -8249,6 +8316,180 @@ export default function Layout(): React.JSX.Element {
   }
 
   // --- RENDERING BARRIER IF NOT LOGGED IN ---
+
+  if (dbStatusLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#0b1326] p-4">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-primary"></div>
+      </div>
+    )
+  }
+
+  if (dbStatus && !dbStatus.success) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#0b1326] p-6 font-sans relative overflow-hidden" dir={direction}>
+        {/* Glow Effects */}
+        <div className="absolute top-1/4 left-1/4 w-[35rem] h-[35rem] bg-error-container/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-[35rem] h-[35rem] bg-primary-container/5 rounded-full blur-[150px] pointer-events-none animate-pulse" />
+
+        <div className="w-full max-w-2xl bg-surface-container/60 backdrop-blur-xl border border-outline-variant rounded-xl p-8 shadow-2xl relative text-on-surface" style={{ backdropFilter: 'blur(20px)' }}>
+          <div className="flex flex-col items-center mb-6">
+            <div className="w-16 h-16 bg-gradient-to-tr from-error to-amber-500 rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-error/30 animate-pulse">
+              <span className="material-symbols-outlined text-white text-3xl font-black">database_off</span>
+            </div>
+            <h1 className="text-2xl font-extrabold text-white tracking-tight text-center">
+              {lang === 'ar' ? 'تعذر الاتصال بقاعدة البيانات' : 'Database Connection Failed'}
+            </h1>
+            <p className="text-sm text-on-surface-variant text-center mt-2 leading-relaxed max-w-md">
+              {lang === 'ar'
+                ? 'فشل التطبيق في الاتصال أو تشغيل قاعدة البيانات المطلوبة للعمل. يرجى مراجعة الخطأ وإعدادات الاتصال أدناه.'
+                : 'The application failed to connect or load the database. Please review the error and settings below.'}
+            </p>
+          </div>
+
+          {/* Error Message Detail Box */}
+          <div className="bg-error-container/15 border border-error-container/30 rounded-lg p-4 mb-6">
+            <div className="flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-error text-xl shrink-0 mt-0.5">warning</span>
+              <div className="flex-grow">
+                <span className="text-xs font-bold text-error uppercase tracking-wider block mb-1">
+                  {lang === 'ar' ? 'تفاصيل الخطأ الفني:' : 'Technical Error Details:'}
+                </span>
+                <p className="text-xs font-mono leading-relaxed text-on-error-container select-text break-words">
+                  {dbStatus.error}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* DB Settings Form */}
+          <form onSubmit={async (e) => {
+            e.preventDefault()
+            setFirstRunLoading(true)
+            setFirstRunError('')
+            try {
+              const testRes = await window.api.settings.testDbConnection({ databaseUrl, dbType })
+              if (!testRes.success) {
+                setFirstRunError(testRes.messageAr || testRes.messageEn || 'فشل اختبار الاتصال')
+                setFirstRunLoading(false)
+                return
+              }
+              const saveRes = await window.api.settings.saveDbConfig({ databaseUrl, dbType })
+              if (saveRes.success) {
+                await window.api.app.relaunch()
+              } else {
+                setFirstRunError(saveRes.error || 'فشل حفظ الإعدادات')
+              }
+            } catch (err: any) {
+              setFirstRunError(err?.message || String(err))
+            }
+            setFirstRunLoading(false)
+          }} className="space-y-5">
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setDbType('sqlite')
+                  const defaultPath = `file:servio.db`
+                  setDatabaseUrl(defaultPath)
+                }}
+                className={`py-3 px-4 rounded-lg border font-bold text-sm transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  dbType === 'sqlite'
+                    ? 'bg-primary/20 border-primary text-primary-light shadow-md'
+                    : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant hover:text-white'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">database</span>
+                <span>SQLite (جهاز واحد)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDbType('postgresql')
+                  if (!databaseUrl.startsWith('postgresql')) {
+                    setDatabaseUrl('postgresql://postgres:postgres@localhost:5432/pos_erp')
+                  }
+                }}
+                className={`py-3 px-4 rounded-lg border font-bold text-sm transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  dbType === 'postgresql'
+                    ? 'bg-primary/20 border-primary text-primary-light shadow-md'
+                    : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant hover:text-white'
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">dns</span>
+                <span>PostgreSQL (ربط شبكي)</span>
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-on-surface-variant">
+                {dbType === 'postgresql' ? (lang === 'ar' ? 'رابط الاتصال بـ PostgreSQL' : 'PostgreSQL Connection URL') : (lang === 'ar' ? 'مسار ملف SQLite (نسبي أو مطلق)' : 'SQLite Database Path')}
+              </label>
+              <input
+                type="text"
+                required
+                value={databaseUrl}
+                onChange={(e) => setDatabaseUrl(e.target.value)}
+                className="w-full bg-surface-container-lowest border border-outline-variant focus:border-primary text-white rounded-lg py-2.5 px-4 outline-none transition-all text-xs font-mono"
+                placeholder={dbType === 'postgresql' ? 'postgresql://username:password@host:port/database' : 'file:servio.db'}
+              />
+              <span className="text-[10px] text-outline block leading-relaxed">
+                {dbType === 'postgresql' 
+                  ? (lang === 'ar' ? 'الصيغة: postgresql://المستخدم:الباسورد@الآي-بي:المنفذ/اسم-البيانات' : 'Format: postgresql://user:password@host:port/database')
+                  : (lang === 'ar' ? 'ملحوظة: سيتم إنشاء الملف تلقائياً في مجلد بيانات التطبيق إذا كان مساراً نسبياً.' : 'Note: Relative paths will be resolved relative to the application user data directory.')}
+              </span>
+            </div>
+
+            {firstRunError && (
+              <p className="text-error text-xs text-center font-medium bg-error-container/20 border border-error-container/30 py-2.5 rounded-lg select-text">
+                {firstRunError}
+              </p>
+            )}
+
+            <div className="flex gap-4">
+              <button
+                type="button"
+                disabled={firstRunLoading}
+                onClick={async () => {
+                  setFirstRunLoading(true)
+                  setFirstRunError('')
+                  try {
+                    const res = await window.api.settings.testDbConnection({ databaseUrl, dbType })
+                    alert(lang === 'ar' ? res.messageAr : res.messageEn)
+                  } catch (err: any) {
+                    setFirstRunError(err?.message || String(err))
+                  }
+                  setFirstRunLoading(false)
+                }}
+                className="flex-grow py-3 bg-surface-container-highest text-on-surface hover:text-white font-bold rounded-lg transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 border border-outline-variant"
+              >
+                <span className="material-symbols-outlined text-sm">wifi_tethering</span>
+                <span>{lang === 'ar' ? '🔌 اختبار الاتصال' : 'Test Connection'}</span>
+              </button>
+
+              <button
+                type="submit"
+                disabled={firstRunLoading}
+                className="flex-grow py-3 bg-primary text-on-primary font-bold rounded-lg shadow-lg hover:bg-primary-fixed-dim transition-all active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+              >
+                {firstRunLoading ? (
+                  <>
+                    <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                    <span>{lang === 'ar' ? 'جاري الاتصال والريستارت...' : 'Saving & Relaunch...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-sm">restart_alt</span>
+                    <span>{lang === 'ar' ? 'حفظ وإعادة تشغيل التطبيق' : 'Save & Relaunch'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
 
   if (isCheckingLicense) {
     return (

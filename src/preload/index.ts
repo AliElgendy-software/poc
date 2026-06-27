@@ -27,7 +27,8 @@ const api = {
     update: (data) => ipcRenderer.invoke('settings:update', data),
     resetData: (data: { username: string; password: string }) => ipcRenderer.invoke('settings:resetData', data),
     getDbConfig: () => ipcRenderer.invoke('settings:getDbConfig'),
-    saveDbConfig: (data: { databaseUrl: string }) => ipcRenderer.invoke('settings:saveDbConfig', data),
+    saveDbConfig: (data: { databaseUrl: string; dbType?: string }) => ipcRenderer.invoke('settings:saveDbConfig', data),
+    testDbConnection: (data: { databaseUrl: string; dbType: string }) => ipcRenderer.invoke('settings:testDbConnection', data),
     changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => ipcRenderer.invoke('settings:changeDbPassword', data)
   },
   products: {
@@ -167,6 +168,12 @@ const api = {
   activityLog: {
     list: (filters?) => ipcRenderer.invoke('activityLog:list', filters),
     clear: (data: { beforeDate: string }) => ipcRenderer.invoke('activityLog:clear', data)
+  },
+  db: {
+    getStatus: () => ipcRenderer.invoke('db:getStatus')
+  },
+  app: {
+    relaunch: () => ipcRenderer.invoke('app:relaunch')
   },
   permissions: {
     get: (data: { userId: string }) => ipcRenderer.invoke('permissions:get', data),

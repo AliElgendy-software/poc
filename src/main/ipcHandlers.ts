@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { prisma } from './db'
+import { prisma, dbInitError, dbType as currentDbType, databaseUrl as currentDatabaseUrl } from './db'
 import crypto from 'crypto'
 import { checkLicenseStatus, activateLicense } from './license'
 
@@ -42,6 +42,23 @@ export function registerIpcHandlers(): void {
       // Never crash the main operation because of a logging failure
     }
   }
+
+  // --- DATABASE STATUS ---
+  ipcMain.handle('db:getStatus', async () => {
+    return {
+      success: !dbInitError,
+      error: dbInitError,
+      dbType: currentDbType,
+      databaseUrl: currentDatabaseUrl
+    }
+  })
+
+  // --- APP RELAUNCH ---
+  ipcMain.handle('app:relaunch', async () => {
+    const { app } = require('electron')
+    app.relaunch()
+    app.exit(0)
+  })
 
   // --- LICENSE HANDLERS ---
   ipcMain.handle('license:status', async () => {
@@ -353,15 +370,22 @@ export function registerIpcHandlers(): void {
       const path = require('path')
       const fs = require('fs')
       const os = require('os')
-      const configDir = app ? app.getPath('userData') : process.cwd()
-      const configPath = path.join(configDir, 'database_config.json')
+      
+      const appDir = app ? path.dirname(app.getPath('exe')) : process.cwd()
+      const installerConfigPath = path.join(appDir, 'database_config.json')
+      const userDataDir = app ? app.getPath('userData') : process.cwd()
+      const fallbackConfigPath = path.join(userDataDir, 'database_config.json')
+
+      let configPath = fallbackConfigPath
+      if (fs.existsSync(installerConfigPath)) {
+        configPath = installerConfigPath
+      }
 
       // Get local IP addresses of this host machine
       const localIps: string[] = []
       const nets = os.networkInterfaces()
       for (const name of Object.keys(nets)) {
         for (const net of nets[name]) {
-          // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
           if (net.family === 'IPv4' && !net.internal) {
             localIps.push(net.address)
           }
@@ -378,6 +402,7 @@ export function registerIpcHandlers(): void {
           localIps
         }
       }
+      
       // Return default SQLite config
       const defaultSqlitePath = app ? path.join(app.getPath('userData'), 'servio.db') : 'servio.db'
       return {
@@ -396,16 +421,88 @@ export function registerIpcHandlers(): void {
       const { app } = require('electron')
       const path = require('path')
       const fs = require('fs')
-      const configDir = app ? app.getPath('userData') : process.cwd()
-      const configPath = path.join(configDir, 'database_config.json')
+      
+      const appDir = app ? path.dirname(app.getPath('exe')) : process.cwd()
+      const installerConfigPath = path.join(appDir, 'database_config.json')
+      const userDataDir = app ? app.getPath('userData') : process.cwd()
+      const fallbackConfigPath = path.join(userDataDir, 'database_config.json')
 
-      fs.mkdirSync(configDir, { recursive: true })
-      fs.writeFileSync(configPath, JSON.stringify({ databaseUrl, dbType }, null, 2), 'utf8')
+      // Save to installer directory if it already exists there (means app is packaged with custom installer db config)
+      // Otherwise save to fallback userData config
+      if (fs.existsSync(installerConfigPath)) {
+        try {
+          fs.writeFileSync(installerConfigPath, JSON.stringify({ databaseUrl, dbType }, null, 2), 'utf8')
+        } catch {
+          // If app folder is write-protected (e.g. Program Files), fall back to AppData
+          fs.mkdirSync(userDataDir, { recursive: true })
+          fs.writeFileSync(fallbackConfigPath, JSON.stringify({ databaseUrl, dbType }, null, 2), 'utf8')
+        }
+      } else {
+        fs.mkdirSync(userDataDir, { recursive: true })
+        fs.writeFileSync(fallbackConfigPath, JSON.stringify({ databaseUrl, dbType }, null, 2), 'utf8')
+      }
+      
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
   })
+
+  // Test database connection before saving
+  ipcMain.handle('settings:testDbConnection', async (_, { databaseUrl, dbType }) => {
+    try {
+      if (dbType === 'postgresql' || databaseUrl.startsWith('postgresql')) {
+        // We require the client from `@prisma/client-postgresql`
+        const { PrismaClient } = require('@prisma/client-postgresql')
+        const tempClient = new PrismaClient({
+          datasources: { db: { url: databaseUrl } },
+          log: ['error']
+        })
+        await tempClient.$connect()
+        await tempClient.$queryRawUnsafe('SELECT 1;')
+        await tempClient.$disconnect()
+        return {
+          success: true,
+          messageAr: `✅ تم الاتصال بـ PostgreSQL بنجاح عبر محرك Prisma!`,
+          messageEn: 'Connected to PostgreSQL successfully via Prisma.'
+        }
+      } else {
+        // SQLite - test using the SQLite Prisma Client
+        const { PrismaClient } = require('@prisma/client-sqlite')
+        const tempClient = new PrismaClient({
+          datasources: { db: { url: databaseUrl } },
+          log: ['error']
+        })
+        await tempClient.$connect()
+        await tempClient.$queryRawUnsafe('SELECT 1;')
+        await tempClient.$disconnect()
+        return {
+          success: true,
+          messageAr: `✅ تم الاتصال بـ SQLite بنجاح عبر محرك Prisma!`,
+          messageEn: 'Connected to SQLite successfully via Prisma.'
+        }
+      }
+    } catch (error: any) {
+      const msg = error.message || error.toString()
+      let arabicError = 'فشل الاتصال بقاعدة البيانات'
+      if (msg.includes('ECONNREFUSED')) {
+        arabicError = 'الاتصال مرفوض - تأكد أن PostgreSQL يعمل على السيرفر ويقبل الاتصال الخارجي'
+      } else if (msg.includes('password authentication failed') || msg.includes('Authentication failed')) {
+        arabicError = 'اسم المستخدم أو كلمة المرور غير صحيحة'
+      } else if (msg.includes('does not exist') || (msg.includes('database') && msg.includes('not found'))) {
+        arabicError = 'قاعدة البيانات المحددة غير موجودة - يرجى إنشاؤها على السيرفر أولاً'
+      } else if (msg.includes('ETIMEDOUT') || msg.includes('timeout') || msg.includes('Timeout')) {
+        arabicError = 'انتهت مهلة الاتصال - تأكد من صحة IP والمنفذ (Port) وجدار الحماية'
+      } else if (msg.includes('EHOSTUNREACH')) {
+        arabicError = 'لا يمكن الوصول للسيرفر - تحقق من عنوان الـ IP والشبكة'
+      } else if (msg.includes('scheme') || msg.includes('file:')) {
+        arabicError = 'تنسيق رابط الاتصال غير صالح لمزود قاعدة البيانات المختار'
+      }
+      return { success: false, messageAr: `❌ ${arabicError}`, messageEn: msg }
+    }
+  })
+
+
 
   ipcMain.handle('settings:changeDbPassword', async (_, { oldPass, newPass, host, port, database }) => {
     try {

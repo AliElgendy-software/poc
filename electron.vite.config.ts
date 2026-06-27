@@ -5,7 +5,12 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        external: ['@prisma/client-sqlite', '@prisma/client-postgresql']
+      }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]

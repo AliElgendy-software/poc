@@ -13,12 +13,12 @@ function main() {
 
   // Create PostgreSQL schema
   console.log('Creating schema.postgresql.prisma...')
-  let pgContent = schemaContent.replace(/provider\s*=\s*"postgresql"/g, 'provider = "postgresql"')
+  let pgContent = schemaContent.replace(/provider\s*=\s*"sqlite"/g, 'provider = "postgresql"')
   pgContent = pgContent.replace(
     /generator client \{([\s\S]*?)\}/,
     `generator client {
   provider      = "prisma-client-js"
-  output        = "../src/main/generated/postgresql"
+  output        = "../node_modules/@prisma/client-postgresql"
   binaryTargets = ["native", "windows", "linux-musl", "debian-openssl-3.0.x"]
 }`
   )
@@ -26,13 +26,12 @@ function main() {
 
   // Create SQLite schema
   console.log('Creating schema.sqlite.prisma...')
-  // Replace postgresql with sqlite in provider
-  let sqliteContent = schemaContent.replace(/provider\s*=\s*"postgresql"/g, 'provider = "sqlite"')
+  let sqliteContent = schemaContent.replace(/provider\s*=\s*"sqlite"/g, 'provider = "sqlite"')
   sqliteContent = sqliteContent.replace(
     /generator client \{([\s\S]*?)\}/,
     `generator client {
   provider      = "prisma-client-js"
-  output        = "../src/main/generated/sqlite"
+  output        = "../node_modules/@prisma/client-sqlite"
   binaryTargets = ["native", "windows", "linux-musl", "debian-openssl-3.0.x"]
 }`
   )

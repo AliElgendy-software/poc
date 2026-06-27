@@ -26,6 +26,7 @@ export interface ApiBridge {
     resetData: (data: { username: string; password: string }) => Promise<{ success: boolean; error?: string }>
     getDbConfig: () => Promise<{ success: boolean; databaseUrl?: string; dbType?: string; localIps?: string[]; error?: string }>
     saveDbConfig: (data: { databaseUrl: string; dbType?: string }) => Promise<{ success: boolean; error?: string }>
+    testDbConnection: (data: { databaseUrl: string; dbType: string }) => Promise<{ success: boolean; messageAr?: string; messageEn?: string }>
     changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => Promise<{ success: boolean; databaseUrl?: string; error?: string }>
   }
   products: {
@@ -178,6 +179,12 @@ export interface ApiBridge {
   permissions: {
     get: (data: { userId: string }) => Promise<{ success: boolean; data?: any[]; error?: string }>
     save: (data: { userId: string; permissions: any[] }) => Promise<{ success: boolean; data?: any[]; error?: string }>
+  }
+  db: {
+    getStatus: () => Promise<{ success: boolean; error: string | null; dbType: string; databaseUrl: string }>
+  }
+  app: {
+    relaunch: () => Promise<void>
   }
 }
 
