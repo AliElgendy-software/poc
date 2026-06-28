@@ -25,8 +25,8 @@
     "appId": "com.example.codegen",
     "productName": "CodeGen",
     "files": [
-      "dist/**",
-      "src/**",
+      "out/**",
+      "resources/**",
       "node_modules/**",
       "!**/*.map"
     ],

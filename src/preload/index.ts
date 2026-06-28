@@ -54,7 +54,8 @@ const api = {
     delete: (data: { invoiceId: string; userId: string }) => ipcRenderer.invoke('sales:deleteInvoice', data),
     update: (data: { invoiceId: string; invoiceData: any; userId: string }) => ipcRenderer.invoke('sales:updateInvoice', data),
     listInstallments: (filters) => ipcRenderer.invoke('sales:listInstallments', filters),
-    payInstallment: (data) => ipcRenderer.invoke('sales:payInstallment', data)
+    payInstallment: (data) => ipcRenderer.invoke('sales:payInstallment', data),
+    updateInvoiceNotes: (data: { invoiceId: string; notes: string }) => ipcRenderer.invoke('sales:updateInvoiceNotes', data)
   },
   returns: {
     create: (data) => ipcRenderer.invoke('returns:create', data)

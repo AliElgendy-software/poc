@@ -53,6 +53,7 @@ export interface ApiBridge {
     update: (data: { invoiceId: string; invoiceData: any; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
     listInstallments: (filters: { clientId?: string; status?: string; overdue?: boolean }) => Promise<{ success: boolean; data?: any[]; error?: string }>
     payInstallment: (data: { installmentId: string; amount: number; userId: string; shiftId?: string }) => Promise<{ success: boolean; data?: any; error?: string }>
+    updateInvoiceNotes: (data: { invoiceId: string; notes: string }) => Promise<{ success: boolean; error?: string }>
   }
   returns: {
     create: (data: any) => Promise<{ success: boolean; data?: any; error?: string }>

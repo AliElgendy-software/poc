@@ -4662,16 +4662,27 @@ export default function Layout(): React.JSX.Element {
                           </span>
                         </td>
                         <td className="px-4 text-center">
-                          <button
-                            onClick={() => {
-                              // We will trigger PDF invoice export here
-                              handleExportInvoicePDF(si)
-                            }}
-                            className="bg-primary/20 hover:bg-primary hover:text-white text-primary px-2.5 py-1 rounded text-[10px] font-bold flex items-center justify-center gap-1 mx-auto transition-colors cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-xs">picture_as_pdf</span>
-                            <span>{lang === 'ar' ? 'تصدير PDF' : 'Export PDF'}</span>
-                          </button>
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => {
+                                setEditInvoiceNotes(si.notes || '')
+                                setViewInvoiceModal(si)
+                              }}
+                              className="bg-secondary/20 hover:bg-secondary hover:text-white text-secondary px-2 py-1 rounded text-[10px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-xs">visibility</span>
+                              <span>{lang === 'ar' ? 'عرض وتعديل' : 'View & Edit'}</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleExportInvoicePDF(si)
+                              }}
+                              className="bg-primary/20 hover:bg-primary hover:text-white text-primary px-2 py-1 rounded text-[10px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-xs">picture_as_pdf</span>
+                              <span>{lang === 'ar' ? 'تصدير PDF' : 'Export PDF'}</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -4841,6 +4852,7 @@ export default function Layout(): React.JSX.Element {
                         <th className="px-4 py-2">{lang === 'ar' ? 'الحساب / الخزينة' : 'Account/Vault'}</th>
                         <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'المبلغ المسدد' : 'Amount'}</th>
                         <th className="px-4 py-2">{lang === 'ar' ? 'البيان' : 'Notes'}</th>
+                        <th className="px-4 py-2 text-center">{lang === 'ar' ? 'خيارات' : 'Actions'}</th>
                       </tr>
                     </thead>
                     <tbody className="text-xs divide-y divide-outline-variant/20 font-data-mono">
@@ -4858,6 +4870,15 @@ export default function Layout(): React.JSX.Element {
                           </td>
                           <td className="px-4 text-left rtl:text-left ltr:text-right font-bold text-secondary">{cp.amount.toFixed(2)}</td>
                           <td className="px-4 font-sans text-outline truncate max-w-[150px]">{cp.notes || '---'}</td>
+                          <td className="px-4 text-center">
+                            <button
+                              onClick={() => handlePrintPaymentReceipt(cp)}
+                              className="bg-secondary/20 hover:bg-secondary hover:text-white text-secondary px-2.5 py-1 rounded text-[10px] font-bold flex items-center justify-center gap-1 mx-auto transition-colors cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-xs">print</span>
+                              <span>{lang === 'ar' ? 'وصل دفع' : 'Receipt'}</span>
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       {clientPayments.length === 0 && (
@@ -10757,7 +10778,119 @@ export default function Layout(): React.JSX.Element {
         </div>
       )}
 
-      {/* 5. Modal: POS Security Manager PIN Gate */}
+      {/* 5. Modal: Invoice Detail / Edit View */}
+      {viewInvoiceModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[999] flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-surface-container-lowest border border-outline-variant w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined text-3xl">receipt_long</span>
+                </div>
+                <div>
+                  <h2 className="text-xl font-black text-white">{lang === 'ar' ? `تفاصيل الفاتورة #${viewInvoiceModal.invoiceNumber}` : `Invoice Details #${viewInvoiceModal.invoiceNumber}`}</h2>
+                  <p className="text-xs text-outline">{new Date(viewInvoiceModal.date).toLocaleString()}</p>
+                </div>
+              </div>
+              <button onClick={() => setViewInvoiceModal(null)} className="w-10 h-10 rounded-full hover:bg-error/10 hover:text-error text-outline transition-all cursor-pointer flex items-center justify-center">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-8">
+              <div className="grid grid-cols-3 gap-6">
+                <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/30">
+                  <span className="text-[10px] font-bold text-outline uppercase tracking-wider block mb-1">{lang === 'ar' ? 'العميل' : 'Client'}</span>
+                  <div className="text-white font-bold">{viewInvoiceModal.client?.name || (lang === 'ar' ? 'عميل نقدي' : 'Cash Client')}</div>
+                </div>
+                <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/30">
+                  <span className="text-[10px] font-bold text-outline uppercase tracking-wider block mb-1">{lang === 'ar' ? 'طريقة الدفع' : 'Payment Method'}</span>
+                  <div className="text-white font-bold">{viewInvoiceModal.paymentType}</div>
+                </div>
+                <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/30">
+                  <span className="text-[10px] font-bold text-outline uppercase tracking-wider block mb-1">{lang === 'ar' ? 'بواسطة' : 'Cashier'}</span>
+                  <div className="text-white font-bold">{viewInvoiceModal.user?.name || '---'}</div>
+                </div>
+              </div>
+
+              <div className="border border-outline-variant rounded-2xl overflow-hidden bg-surface-container-low">
+                <table className="w-full text-right rtl:text-right">
+                  <thead className="bg-surface-container-high text-[10px] font-bold text-outline uppercase tracking-widest">
+                    <tr>
+                      <th className="px-4 py-3">{lang === 'ar' ? 'الصنف' : 'Item'}</th>
+                      <th className="px-4 py-3 text-center">{lang === 'ar' ? 'الكمية' : 'Qty'}</th>
+                      <th className="px-4 py-3 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'السعر' : 'Price'}</th>
+                      <th className="px-4 py-3 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'الإجمالي' : 'Total'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant/10 text-xs">
+                    {viewInvoiceModal.items?.map((item: any, idx: number) => (
+                      <tr key={idx} className="text-white font-medium">
+                        <td className="px-4 py-3">{item.product?.name || (lang === 'ar' ? 'صنف غير معروف' : 'Unknown Item')}</td>
+                        <td className="px-4 py-3 text-center font-mono">{item.quantity}</td>
+                        <td className="px-4 py-3 text-left rtl:text-left ltr:text-right font-mono text-outline">{item.sellPrice.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-left rtl:text-left ltr:text-right font-mono font-bold">{(item.quantity * item.sellPrice).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex justify-between items-start gap-8">
+                <div className="flex-1 space-y-3">
+                  <label className="text-[10px] font-bold text-outline uppercase tracking-wider block">{lang === 'ar' ? 'ملاحظات الفاتورة (قابلة للتعديل)' : 'Invoice Notes (Editable)'}</label>
+                  <textarea
+                    value={editInvoiceNotes}
+                    onChange={(e) => setEditInvoiceNotes(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded-2xl p-4 text-xs text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                    rows={3}
+                    placeholder={lang === 'ar' ? 'أضف ملاحظاتك هنا...' : 'Add notes here...'}
+                  />
+                  <button
+                    onClick={handleSaveInvoiceNotes}
+                    disabled={editInvoiceSaving}
+                    className="bg-primary text-on-primary px-6 py-2 rounded-xl text-xs font-bold hover:brightness-110 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {editInvoiceSaving ? (lang === 'ar' ? 'جاري الحفظ...' : 'Saving...') : (lang === 'ar' ? 'حفظ الملاحظات' : 'Save Notes')}
+                  </button>
+                </div>
+                <div className="w-64 bg-surface-container-high p-6 rounded-3xl space-y-4 border border-outline-variant/30">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-outline">{lang === 'ar' ? 'الإجمالي الفرعي' : 'Subtotal'}</span>
+                    <span className="text-white font-mono">{viewInvoiceModal.subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-outline">{lang === 'ar' ? 'الخصم' : 'Discount'}</span>
+                    <span className="text-error font-mono">-{viewInvoiceModal.discount.toFixed(2)}</span>
+                  </div>
+                  <div className="pt-4 border-t border-outline-variant flex justify-between items-center">
+                    <span className="text-sm font-black text-primary uppercase">{lang === 'ar' ? 'الصافي' : 'Net Total'}</span>
+                    <span className="text-xl font-black text-white font-mono">{viewInvoiceModal.totalAmount.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-surface-container-low border-t border-outline-variant flex gap-4">
+              <button
+                onClick={() => handleExportInvoicePDF(viewInvoiceModal)}
+                className="flex-1 bg-primary/10 hover:bg-primary text-primary hover:text-on-primary py-3 rounded-2xl font-bold transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined">print</span>
+                {lang === 'ar' ? 'طباعة الفاتورة' : 'Print Invoice'}
+              </button>
+              <button
+                onClick={() => setViewInvoiceModal(null)}
+                className="px-8 bg-surface-container-highest text-on-surface py-3 rounded-2xl font-bold hover:bg-outline-variant/20 transition-all cursor-pointer"
+              >
+                {lang === 'ar' ? 'إغلاق' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Modal: POS Security Manager PIN Gate */}
 
       {managerApproval && managerApproval.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
