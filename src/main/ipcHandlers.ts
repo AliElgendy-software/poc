@@ -1,6 +1,8 @@
-import { ipcMain } from 'electron'
+import { ipcMain, dialog } from 'electron'
 import { prisma, dbInitError, dbType as currentDbType, databaseUrl as currentDatabaseUrl } from './db'
 import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
 import { checkLicenseStatus, activateLicense } from './license'
 
 // Simple built-in SHA256 hashing helper
@@ -353,10 +355,40 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('settings:update', async (_, settingsData) => {
     try {
+      const {
+        storeName, storeLogo, storePhone, storeAddress,
+        receiptFooter, receiptHeaderNote, invoiceColor,
+        invoiceShowLogo, invoiceShowVat, invoiceShowQr,
+        printerConfig, taxNumber, commercialRegister,
+        landline, mobile1, mobile2,
+        costingMethod, scalePrefix, scaleSkuLength, scaleValueMode
+      } = settingsData
+      const safeData: Record<string, any> = {}
+      if (storeName            !== undefined) safeData.storeName            = storeName
+      if (storeLogo            !== undefined) safeData.storeLogo            = storeLogo
+      if (storePhone           !== undefined) safeData.storePhone           = storePhone
+      if (storeAddress         !== undefined) safeData.storeAddress         = storeAddress
+      if (receiptFooter        !== undefined) safeData.receiptFooter        = receiptFooter
+      if (receiptHeaderNote    !== undefined) safeData.receiptHeaderNote    = receiptHeaderNote
+      if (invoiceColor         !== undefined) safeData.invoiceColor         = invoiceColor
+      if (invoiceShowLogo      !== undefined) safeData.invoiceShowLogo      = invoiceShowLogo
+      if (invoiceShowVat       !== undefined) safeData.invoiceShowVat       = invoiceShowVat
+      if (invoiceShowQr        !== undefined) safeData.invoiceShowQr        = invoiceShowQr
+      if (printerConfig        !== undefined) safeData.printerConfig        = printerConfig
+      if (taxNumber            !== undefined) safeData.taxNumber            = taxNumber
+      if (commercialRegister   !== undefined) safeData.commercialRegister   = commercialRegister
+      if (landline             !== undefined) safeData.landline             = landline
+      if (mobile1              !== undefined) safeData.mobile1              = mobile1
+      if (mobile2              !== undefined) safeData.mobile2              = mobile2
+      if (costingMethod        !== undefined) safeData.costingMethod        = costingMethod
+      if (scalePrefix          !== undefined) safeData.scalePrefix          = scalePrefix
+      if (scaleSkuLength       !== undefined) safeData.scaleSkuLength       = scaleSkuLength
+      if (scaleValueMode       !== undefined) safeData.scaleValueMode       = scaleValueMode
+
       const settings = await prisma.settings.upsert({
         where: { id: 1 },
-        update: settingsData,
-        create: { id: 1, ...settingsData }
+        update: safeData,
+        create: { id: 1, ...safeData }
       })
       return { success: true, settings }
     } catch (error: any) {
@@ -787,7 +819,12 @@ export function registerIpcHandlers(): void {
           const product = await tx.product.findUnique({ where: { id: item.productId } })
           if (!product) throw new Error(`Product not found: ${item.productId}`)
           
-          if (product.currentStock < item.quantity) {
+          // Compute total quantity from carton breakdown
+          const cartonCount = Number(item.cartonCount ?? 1)
+          const unitsPerCarton = Number(item.unitsPerCarton ?? 1)
+          const totalQuantity = Math.round(cartonCount * unitsPerCarton) || Number(item.quantity) || 1
+
+          if (product.currentStock < totalQuantity) {
             throw new Error(`الكمية المتاحة للمنتج ${product.name} غير كافية`)
           }
 
@@ -795,22 +832,26 @@ export function registerIpcHandlers(): void {
             data: {
               salesInvoiceId: invoice.id,
               productId: item.productId,
-              quantity: item.quantity,
-              sellPrice: item.sellPrice
+              quantity: totalQuantity,
+              sellPrice: item.sellPrice,
+              discount: item.discount ?? 0,
+              cartonCount,
+              unitsPerCarton,
+              totalQuantity
             }
           })
 
-          // Decrement stock
+          // Decrement stock using totalQuantity
           await tx.product.update({
             where: { id: item.productId },
-            data: { currentStock: { decrement: item.quantity } }
+            data: { currentStock: { decrement: totalQuantity } }
           })
 
-          totalCOGS += item.quantity * product.purchasePrice
+          totalCOGS += totalQuantity * product.purchasePrice
         }
 
-        // 4. Update client outstanding balance if credit with limit validation
-        if (paymentType === 'CREDIT' && resolvedClientId) {
+        // 4. Update client outstanding balance for CREDIT or INSTALLMENT sales
+        if ((paymentType === 'CREDIT' || paymentType === 'INSTALLMENT') && resolvedClientId) {
           const client = await tx.client.findUnique({ where: { id: resolvedClientId } })
           if (client) {
             const extraDebt = totalAmount - paidAmount
@@ -839,7 +880,7 @@ export function registerIpcHandlers(): void {
           data: {
             description: `فاتورة مبيعات ${invoiceNumber}`,
             referenceId: invoice.id,
-            debitAcc: paymentType === 'CREDIT' ? 'RECEIVABLES' : (paymentType === 'CARD' ? 'CARD' : 'CASH'),
+            debitAcc: (paymentType === 'CREDIT' || paymentType === 'INSTALLMENT') ? 'RECEIVABLES' : (paymentType === 'CARD' ? 'CARD' : 'CASH'),
             creditAcc: 'REVENUE',
             amount: totalAmount
           }
@@ -961,6 +1002,418 @@ export function registerIpcHandlers(): void {
       })
 
       return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // --- DELETE & EDIT INVOICES HANDLERS ---
+  ipcMain.handle('sales:deleteInvoice', async (_, { invoiceId, userId }) => {
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        // Find invoice with its items
+        const invoice = await tx.salesInvoice.findUnique({
+          where: { id: invoiceId },
+          include: { items: true }
+        })
+        if (!invoice) throw new Error('Invoice not found')
+
+        // 1. Restock products (increase stock back)
+        for (const item of invoice.items) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.quantity } }
+          })
+        }
+
+        // 2. Adjust client balance if credit
+        if (invoice.paymentType === 'CREDIT' && invoice.clientId) {
+          const extraDebt = invoice.totalAmount - invoice.paidAmount
+          await tx.client.update({
+            where: { id: invoice.clientId },
+            data: { currentBalance: { decrement: extraDebt } }
+          })
+        }
+
+        // 3. Adjust shift expected cash if paid by cash
+        if (invoice.paymentType === 'CASH' && invoice.paidAmount > 0) {
+          await tx.shift.update({
+            where: { id: invoice.shiftId },
+            data: { expectedCash: { decrement: invoice.paidAmount } }
+          })
+        }
+
+        // 4. Remove journal entries
+        await tx.journalEntry.deleteMany({
+          where: { referenceId: invoice.id }
+        })
+
+        // 5. Delete returns associated with this invoice
+        const returns = await tx.returnInvoice.findMany({ where: { originalSalesInvoiceId: invoice.id } })
+        for (const ret of returns) {
+          await tx.returnItem.deleteMany({ where: { returnInvoiceId: ret.id } })
+        }
+        await tx.returnInvoice.deleteMany({ where: { originalSalesInvoiceId: invoice.id } })
+
+        // 6. Delete invoice items & invoice
+        await tx.salesItem.deleteMany({ where: { salesInvoiceId: invoice.id } })
+        await tx.salesInvoice.delete({ where: { id: invoice.id } })
+
+        await logActivity({
+          userId,
+          action: 'DELETE_SALES_INVOICE',
+          module: 'POS',
+          entityId: invoice.id,
+          entityType: 'SalesInvoice',
+          description: `حذف فاتورة المبيعات #${invoice.invoiceNumber} بالكامل وإعادة المنتجات للمخزون`,
+          severity: 'CRITICAL',
+          tx
+        })
+
+        return { success: true }
+      })
+      return result
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // Lightweight: update only the notes field of a sales invoice
+  ipcMain.handle('sales:updateInvoiceNotes', async (_, { invoiceId, notes }) => {
+    try {
+      await prisma.salesInvoice.update({ where: { id: invoiceId }, data: { notes } })
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('sales:updateInvoice', async (_, { invoiceId, invoiceData, userId }) => {
+    try {
+      const { clientId, subtotal, discount, totalAmount, paidAmount, paymentType, items, notes } = invoiceData
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Find existing invoice
+        const oldInvoice = await tx.salesInvoice.findUnique({
+          where: { id: invoiceId },
+          include: { items: true }
+        })
+        if (!oldInvoice) throw new Error('Invoice not found')
+
+        // 1. Revert old stock changes
+        for (const item of oldInvoice.items) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { increment: item.quantity } }
+          })
+        }
+
+        // 2. Revert client balance
+        if (oldInvoice.paymentType === 'CREDIT' && oldInvoice.clientId) {
+          const oldDebt = oldInvoice.totalAmount - oldInvoice.paidAmount
+          await tx.client.update({
+            where: { id: oldInvoice.clientId },
+            data: { currentBalance: { decrement: oldDebt } }
+          })
+        }
+
+        // 3. Revert shift expected cash
+        if (oldInvoice.paymentType === 'CASH' && oldInvoice.paidAmount > 0) {
+          await tx.shift.update({
+            where: { id: oldInvoice.shiftId },
+            data: { expectedCash: { decrement: oldInvoice.paidAmount } }
+          })
+        }
+
+        // 4. Delete old items and old journal entries
+        await tx.salesItem.deleteMany({ where: { salesInvoiceId: invoiceId } })
+        await tx.journalEntry.deleteMany({ where: { referenceId: invoiceId } })
+
+        // Resolve new client
+        let resolvedClientId: string | null = null
+        if (clientId && clientId !== 'Cash Customer') {
+          const client = await tx.client.findFirst({
+            where: { OR: [{ id: clientId }, { name: clientId }] }
+          })
+          if (client) resolvedClientId = client.id
+        }
+
+        // 5. Write new items, decrement stocks, calculate new COGS
+        let totalCOGS = 0
+        for (const item of items) {
+          const product = await tx.product.findUnique({ where: { id: item.productId } })
+          if (!product) throw new Error(`Product not found: ${item.productId}`)
+          
+          if (product.currentStock < item.quantity) {
+            throw new Error(`الكمية المتاحة للمنتج ${product.name} غير كافية`)
+          }
+
+          await tx.salesItem.create({
+            data: {
+              salesInvoiceId: invoiceId,
+              productId: item.productId,
+              quantity: item.quantity,
+              sellPrice: item.sellPrice
+            }
+          })
+
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { currentStock: { decrement: item.quantity } }
+          })
+
+          totalCOGS += item.quantity * product.purchasePrice
+        }
+
+        // 6. Apply new client balance
+        if (paymentType === 'CREDIT' && resolvedClientId) {
+          const client = await tx.client.findUnique({ where: { id: resolvedClientId } })
+          if (client) {
+            const newDebt = totalAmount - paidAmount
+            await tx.client.update({
+              where: { id: resolvedClientId },
+              data: { currentBalance: { increment: newDebt } }
+            })
+          }
+        }
+
+        // 7. Apply new shift expected cash
+        if (paymentType === 'CASH' && paidAmount > 0) {
+          await tx.shift.update({
+            where: { id: oldInvoice.shiftId },
+            data: { expectedCash: { increment: paidAmount } }
+          })
+        }
+
+        // 8. Update sales invoice details
+        const updatedInvoice = await tx.salesInvoice.update({
+          where: { id: invoiceId },
+          data: {
+            clientId: resolvedClientId,
+            subtotal,
+            discount,
+            totalAmount,
+            paidAmount,
+            paymentType,
+            notes
+          }
+        })
+
+        // 9. Recreate journal entries
+        await tx.journalEntry.create({
+          data: {
+            description: `تعديل فاتورة مبيعات ${oldInvoice.invoiceNumber}`,
+            referenceId: invoiceId,
+            debitAcc: paymentType === 'CREDIT' ? 'RECEIVABLES' : (paymentType === 'CARD' ? 'CARD' : 'CASH'),
+            creditAcc: 'REVENUE',
+            amount: totalAmount
+          }
+        })
+
+        if (totalCOGS > 0) {
+          await tx.journalEntry.create({
+            data: {
+              description: `تكلفة البضاعة المباعة لفاتورة ${oldInvoice.invoiceNumber} (معدلة)`,
+              referenceId: invoiceId,
+              debitAcc: 'COGS',
+              creditAcc: 'INVENTORY',
+              amount: totalCOGS
+            }
+          })
+        }
+
+        await logActivity({
+          userId,
+          action: 'UPDATE_SALES_INVOICE',
+          module: 'POS',
+          entityId: invoiceId,
+          entityType: 'SalesInvoice',
+          description: `تعديل فاتورة مبيعات #${oldInvoice.invoiceNumber} وتحديث حسابات العميل والمخزون`,
+          severity: 'WARNING',
+          tx
+        })
+
+        return { success: true, data: updatedInvoice }
+      })
+      return result
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // --- STOCK ADJUSTMENT / للهالك والجرد ---
+  ipcMain.handle('stock:createAdjustment', async (_, { productId, quantity, reason, notes, userId }) => {
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        // Ensure product exists
+        const product = await tx.product.findUnique({ where: { id: productId } })
+        if (!product) throw new Error('Product not found')
+
+        // Create adjustment record
+        const adjustment = await tx.stockAdjustment.create({
+          data: {
+            productId,
+            quantity,
+            reason,
+            notes,
+            userId
+          }
+        })
+
+        // Update product current stock (quantity can be negative for loss/damage, positive for adjustments)
+        const updated = await tx.product.update({
+          where: { id: productId },
+          data: { currentStock: { increment: quantity } }
+        })
+
+        // Log to product movement
+        await tx.productMovement.create({
+          data: {
+            productId,
+            type: quantity < 0 ? 'ADJUSTMENT_LOSS' : 'ADJUSTMENT_GAIN',
+            quantity: Math.abs(quantity),
+            notes: `تسوية مخزن: ${reason}. ملاحظات: ${notes || ''}`
+          }
+        })
+
+        await logActivity({
+          userId,
+          action: 'STOCK_ADJUSTMENT',
+          module: 'INVENTORY',
+          entityId: adjustment.id,
+          entityType: 'StockAdjustment',
+          description: `تسوية كمية منتج (${product.name}): مقدار التعديل (${quantity})، السبب: ${reason}`,
+          severity: quantity < 0 ? 'WARNING' : 'INFO',
+          tx
+        })
+
+        return { adjustment, updated }
+      })
+      return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('stock:listAdjustments', async () => {
+    try {
+      const list = await prisma.stockAdjustment.findMany({
+        include: { product: true },
+        orderBy: { date: 'desc' }
+      })
+      return { success: true, data: list }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // --- FINANCIAL CORRECTIONS HANDLERS ---
+  ipcMain.handle('financials:updateTransaction', async (_, { txId, amount, notes, userId }) => {
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const oldTx = await tx.vaultTransaction.findUnique({ where: { id: txId } })
+        if (!oldTx) throw new Error('Transaction not found')
+
+        // 1. Revert old transaction amount on Vault
+        const coeff = oldTx.type === 'DEPOSIT' ? -1 : 1
+        await tx.vault.update({
+          where: { id: oldTx.vaultId },
+          data: { currentBalance: { increment: oldTx.amount * coeff } }
+        })
+
+        // 2. Apply new transaction amount on Vault
+        const newCoeff = oldTx.type === 'DEPOSIT' ? 1 : -1
+        const updatedVault = await tx.vault.update({
+          where: { id: oldTx.vaultId },
+          data: { currentBalance: { increment: amount * newCoeff } }
+        })
+
+        // 3. Update Transaction record
+        const updatedTx = await tx.vaultTransaction.update({
+          where: { id: txId },
+          data: {
+            amount,
+            notes: notes || oldTx.notes
+          }
+        })
+
+        // Update related journal entry
+        await tx.journalEntry.updateMany({
+          where: { referenceId: txId },
+          data: { amount }
+        })
+
+        await logActivity({
+          userId,
+          action: 'CORRECT_VAULT_TRANSACTION',
+          module: 'FINANCE',
+          entityId: txId,
+          entityType: 'VaultTransaction',
+          description: `تصحيح حركة خزينة: تعديل المبلغ من (${oldTx.amount}) إلى (${amount})`,
+          severity: 'WARNING',
+          tx
+        })
+
+        return { updatedTx, updatedVault }
+      })
+      return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // --- VAT REPORT HANDLER ---
+  ipcMain.handle('reports:getVatReport', async (_, { startDate, endDate }) => {
+    try {
+      const start = startDate ? new Date(startDate) : new Date(0)
+      const end = endDate ? new Date(endDate) : new Date()
+
+      // Fetch Sales invoices in period
+      const sales = await prisma.salesInvoice.findMany({
+        where: {
+          date: { gte: start, lte: end }
+        }
+      })
+
+      // Fetch Purchase invoices in period
+      const purchases = await prisma.purchaseInvoice.findMany({
+        where: {
+          date: { gte: start, lte: end }
+        }
+      })
+
+      // Calculate VAT totals (Assuming standard 15% VAT registered in system for simplicity)
+      // Sales VAT = Sales total amount * 0.15 (standard Saudi/Egypt default simple calculate or subtotal based)
+      let salesVat = 0
+      let salesTaxableAmount = 0
+      sales.forEach((s) => {
+        const taxable = s.totalAmount / 1.15
+        salesTaxableAmount += taxable
+        salesVat += s.totalAmount - taxable
+      })
+
+      let purchasesVat = 0
+      let purchasesTaxableAmount = 0
+      purchases.forEach((p) => {
+        const taxable = p.totalAmount / 1.15
+        purchasesTaxableAmount += taxable
+        purchasesVat += p.totalAmount - taxable
+      })
+
+      const netVat = salesVat - purchasesVat
+
+      return {
+        success: true,
+        data: {
+          salesTaxableAmount,
+          salesVat,
+          purchasesTaxableAmount,
+          purchasesVat,
+          netVat,
+          salesCount: sales.length,
+          purchasesCount: purchases.length
+        }
+      }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
@@ -2624,17 +3077,280 @@ export function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('inventory:listAudits', async () => {
+  ipcMain.handle('inventory:listAudits', async (_, filters?: {
+    startDate?: string
+    endDate?: string
+    auditNumber?: string
+    warehouseId?: string
+    page?: number
+    limit?: number
+  }) => {
     try {
+      const page = filters?.page || 1
+      const limit = filters?.limit || 20
+      const skip = (page - 1) * limit
+
+      const where: any = {}
+
+      if (filters?.warehouseId) {
+        where.warehouseId = filters.warehouseId
+      }
+
+      if (filters?.auditNumber) {
+        where.auditNumber = { contains: filters.auditNumber }
+      }
+
+      if (filters?.startDate || filters?.endDate) {
+        where.date = {}
+        if (filters.startDate) {
+          where.date.gte = new Date(filters.startDate)
+        }
+        if (filters.endDate) {
+          where.date.lte = new Date(filters.endDate + 'T23:59:59')
+        }
+      }
+
+      const totalCount = await prisma.inventoryAudit.count({ where })
+
       const audits = await prisma.inventoryAudit.findMany({
+        where,
         include: {
           warehouse: true,
           user: { select: { name: true } },
           items: { include: { product: true } }
         },
-        orderBy: { date: 'desc' }
+        orderBy: { date: 'desc' },
+        skip,
+        take: limit
       })
-      return { success: true, data: audits }
+
+      return {
+        success: true,
+        data: audits,
+        pagination: {
+          totalCount,
+          page,
+          limit,
+          totalPages: Math.ceil(totalCount / limit)
+        }
+      }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings:backup', async (_, { userId }) => {
+    try {
+      if (currentDbType !== 'sqlite') {
+        return { success: false, error: 'النسخ الاحتياطي متاح فقط لقواعد بيانات SQLite المحلية حالياً.' }
+      }
+
+      // Extract absolute path of SQLite db file from databaseUrl
+      // URL is like "file:/absolute/path/to/servio.db" or "file:C:/..."
+      let dbPath = currentDatabaseUrl
+      if (dbPath.startsWith('file:')) {
+        dbPath = dbPath.slice(5)
+      }
+      dbPath = path.resolve(dbPath)
+
+      if (!fs.existsSync(dbPath)) {
+        return { success: false, error: 'لم يتم العثور على ملف قاعدة البيانات الحالي!' }
+      }
+
+      const todayStr = new Date().toISOString().slice(0, 10)
+      const defaultFilename = `servio_backup_${todayStr}.db`
+
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'اختر مكان حفظ النسخة الاحتياطية',
+        defaultPath: defaultFilename,
+        filters: [
+          { name: 'Database Files', extensions: ['db', 'sqlite'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (canceled || !filePath) {
+        return { success: false, error: 'تم إلغاء عملية الحفظ' }
+      }
+
+      // Copy sqlite db file to target destination
+      fs.copyFileSync(dbPath, filePath)
+
+      await logActivity({
+        userId,
+        action: 'DB_BACKUP_CREATED',
+        module: 'SETTINGS',
+        description: `تم إنشاء نسخة احتياطية من قاعدة البيانات بنجاح وحفظها في: ${filePath}`,
+        severity: 'INFO'
+      })
+
+      return { success: true, filePath }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('settings:restore', async (_, { userId }) => {
+    try {
+      if (currentDbType !== 'sqlite') {
+        return { success: false, error: 'الاستعادة متاحة فقط لقواعد بيانات SQLite المحلية حالياً.' }
+      }
+
+      let dbPath = currentDatabaseUrl
+      if (dbPath.startsWith('file:')) {
+        dbPath = dbPath.slice(5)
+      }
+      dbPath = path.resolve(dbPath)
+
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'اختر ملف النسخة الاحتياطية لاستعادتها',
+        filters: [
+          { name: 'Database Files', extensions: ['db', 'sqlite'] }
+        ],
+        properties: ['openFile']
+      })
+
+      if (canceled || filePaths.length === 0) {
+        return { success: false, error: 'تم إلغاء عملية الاستعادة' }
+      }
+
+      const selectedPath = filePaths[0]
+
+      // Close prisma connection before replacing database file
+      if (prisma) {
+        await prisma.$disconnect()
+      }
+
+      // Copy current DB file to an auto-backup before overwriting
+      if (fs.existsSync(dbPath)) {
+        fs.copyFileSync(dbPath, dbPath + '.before_restore.bak')
+      }
+
+      // Copy selected backup file to replace original dbPath
+      fs.copyFileSync(selectedPath, dbPath)
+
+      await logActivity({
+        userId,
+        action: 'DB_RESTORED',
+        module: 'SETTINGS',
+        description: `تم استعادة قاعدة البيانات بنجاح من الملف: ${selectedPath}`,
+        severity: 'CRITICAL'
+      })
+
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // INSTALLMENTS & CREDIT SALES MANAGEMENT HANDLERS
+  // ─────────────────────────────────────────────────────────────────────────
+  ipcMain.handle('sales:listInstallments', async (_, filters: { clientId?: string; status?: string; overdue?: boolean }) => {
+    try {
+      const whereClause: any = {}
+      if (filters.clientId) {
+        whereClause.clientId = filters.clientId
+      }
+      if (filters.status) {
+        whereClause.status = filters.status
+      }
+      if (filters.overdue) {
+        whereClause.status = 'PENDING'
+        whereClause.dueDate = { lt: new Date() }
+      }
+
+      const installments = await prisma.installment.findMany({
+        where: whereClause,
+        include: {
+          client: { select: { name: true, phone: true } },
+          salesInvoice: { select: { invoiceNumber: true, totalAmount: true } }
+        },
+        orderBy: { dueDate: 'asc' }
+      })
+
+      return { success: true, data: installments }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('sales:payInstallment', async (_, data: { installmentId: string; amount: number; userId: string; shiftId?: string }) => {
+    try {
+      const { installmentId, amount, userId, shiftId } = data
+      if (amount <= 0) return { success: false, error: 'يجب أن يكون مبلغ التحصيل أكبر من الصفر.' }
+
+      const res = await prisma.$transaction(async (tx: any) => {
+        // 1. Get current installment status
+        const inst = await tx.installment.findUnique({
+          where: { id: installmentId },
+          include: { client: true, salesInvoice: true }
+        })
+
+        if (!inst) throw new Error('لم يتم العثور على القسط المطلوب.')
+        const remaining = inst.amount - inst.paidAmount
+        if (amount > remaining) throw new Error(`المبلغ المدفوع أكبر من المتبقي على القسط (${remaining} ج.م)`)
+
+        const newPaid = inst.paidAmount + amount
+        const isPaidFully = newPaid >= inst.amount
+
+        // 2. Update installment paid amount and status
+        const updatedInst = await tx.installment.update({
+          where: { id: installmentId },
+          data: {
+            paidAmount: newPaid,
+            status: isPaidFully ? 'PAID' : 'PENDING',
+            paidDate: isPaidFully ? new Date() : undefined
+          }
+        })
+
+        // 3. Revert/decrease client balance (reduce debt)
+        await tx.client.update({
+          where: { id: inst.clientId },
+          data: {
+            currentBalance: { decrement: amount }
+          }
+        })
+
+        // 4. Record Cash In transaction in the Vault
+        const vault = await tx.vault.findFirst()
+        const vaultId = vault ? vault.id : 'main_vault'
+
+        await tx.vaultTransaction.create({
+          data: {
+            vaultId,
+            type: 'CASH_IN',
+            amount,
+            referenceId: inst.salesInvoiceId,
+            notes: `تحصيل قسط من العميل: ${inst.client.name} - فاتورة رقم: ${inst.salesInvoice.invoiceNumber}`,
+            userId,
+            shiftId
+          }
+        })
+
+        // 5. Update Vault Balance
+        await tx.vault.update({
+          where: { id: vaultId },
+          data: {
+            currentBalance: { increment: amount }
+          }
+        })
+
+        // 6. Record Journal double entry (Debit Cash, Credit Receivables)
+        await tx.journalEntry.create({
+          data: {
+            description: `تحصيل قسط آجل للعميل ${inst.client.name}`,
+            referenceId: inst.id,
+            debitAcc: 'CASH',
+            creditAcc: 'RECEIVABLES',
+            amount
+          }
+        })
+
+        return updatedInst
+      })
+
+      return { success: true, data: res }
     } catch (error: any) {
       return { success: false, error: error.message }
     }

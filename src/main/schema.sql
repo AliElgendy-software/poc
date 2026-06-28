@@ -559,6 +559,17 @@ CREATE TABLE IF NOT EXISTS "InventoryAuditItem" (
   FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS "StockAdjustment" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "productId" TEXT NOT NULL,
+  "quantity" INTEGER NOT NULL,
+  "reason" TEXT NOT NULL,
+  "notes" TEXT,
+  "userId" TEXT NOT NULL,
+  "date" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS "Product_barcode_idx" ON "Product"("barcode");
 CREATE INDEX IF NOT EXISTS "SalesInvoice_invoiceNumber_idx" ON "SalesInvoice"("invoiceNumber");
@@ -568,3 +579,5 @@ CREATE INDEX IF NOT EXISTS "PurchaseItem_purchaseInvoiceId_idx" ON "PurchaseItem
 CREATE INDEX IF NOT EXISTS "VaultTransaction_vaultId_idx" ON "VaultTransaction"("vaultId");
 CREATE INDEX IF NOT EXISTS "ActivityLog_userId_idx" ON "ActivityLog"("userId");
 CREATE INDEX IF NOT EXISTS "UserPermission_userId_module_idx" ON "UserPermission"("userId", "module");
+CREATE INDEX IF NOT EXISTS "StockAdjustment_productId_idx" ON "StockAdjustment"("productId");
+

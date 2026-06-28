@@ -340,10 +340,15 @@ export default function Layout(): React.JSX.Element {
   const can = (module: string, action: 'canView' | 'canCreate' | 'canEdit' | 'canDelete' | 'canPrint' | 'canExport') => {
     if (!user) return false
     if (user.role === 'ADMIN') return true
-    // MANAGER has full access by default, but let's check granular permissions if specified, otherwise default to true for MANAGER except if denied, but simpler: ADMIN gets true, others check userPermissions
+    
     const userPerm = userPermissions[module]
     if (!userPerm) {
-      // Default fallback for views/actions
+      // If no permissions records exist yet for this user:
+      if (user.role === 'CASHIER') {
+        // Cashiers only get POS access by default
+        return module === 'pos' && (action === 'canView' || action === 'canPrint')
+      }
+      // MANAGER gets view access to all by default
       if (action === 'canView' || action === 'canPrint') return true
       return user.role === 'MANAGER'
     }
@@ -416,11 +421,19 @@ export default function Layout(): React.JSX.Element {
   const [selectedInvoiceForReturn, setSelectedInvoiceForReturn] = useState<any>(null)
 
   // Advanced Inventory States
-  const [inventorySubTab, setInventorySubTab] = useState<'products' | 'suppliers' | 'audit'>('products')
+  const [inventorySubTab, setInventorySubTab] = useState<'products' | 'suppliers' | 'audit' | 'adjustments'>('products')
   const [auditsList, setAuditsList] = useState<any[]>([])
+  const [auditFilterNo, setAuditFilterNo] = useState('')
+  const [auditFilterWh, setAuditFilterWh] = useState('')
+  const [auditFilterStart, setAuditFilterStart] = useState('')
+  const [auditFilterEnd, setAuditFilterEnd] = useState('')
+  const [auditPage, setAuditPage] = useState(1)
+  const [auditTotalPages, setAuditTotalPages] = useState(1)
   const [auditWarehouseId, setAuditWarehouseId] = useState('')
   const [auditNotes, setAuditNotes] = useState('')
   const [auditItemsMap, setAuditItemsMap] = useState<Record<string, number>>({}) // productId -> actualStock
+  const [auditSearchQuery, setAuditSearchQuery] = useState('')
+  const [auditSelectedCategory, setAuditSelectedCategory] = useState('')
   const [suppliers, setSuppliers] = useState<any[]>([])
   const [newSupplier, setNewSupplier] = useState({ name: '', contactPerson: '', phone: '', address: '' })
   
@@ -438,6 +451,32 @@ export default function Layout(): React.JSX.Element {
   // Advanced Finance States (used by fetchLedger/fetchVault fetchers)
   const [profitLossReport, setProfitLossReport] = useState({ revenue: 0, cogs: 0, expenses: 0, netProfit: 0 })
   const [ledgerEntries, setLedgerEntries] = useState<any[]>([])
+
+  // Stock Adjustment States
+  const [adjustmentsList, setAdjustmentsList] = useState<any[]>([])
+  const [adjustProductId, setAdjustProductId] = useState('')
+  const [adjustQty, setAdjustQty] = useState('')
+  const [adjustReason, setAdjustReason] = useState('DAMAGED')
+  const [adjustNotes, setAdjustNotes] = useState('')
+
+  // VAT Report States
+  const [vatReport, setVatReport] = useState<any>(null)
+  const [vatStartDate, setVatStartDate] = useState('')
+  const [vatEndDate, setVatEndDate] = useState('')
+  const [vatLoading, setVatLoading] = useState(false)
+
+  // Invoice Editing States
+  const [editingInvoice, setEditingInvoice] = useState<any>(null)
+  const [isEditingInvoice, setIsEditingInvoice] = useState(false)
+
+  // Vault Transaction Editing States
+  const [editingTransaction, setEditingTransaction] = useState<any>(null)
+  const [editTxAmount, setEditTxAmount] = useState('')
+  const [editTxNotes, setEditTxNotes] = useState('')
+
+  // User Permissions States
+  const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<any>(null)
+  const [userPermissionsMap, setUserPermissionsMap] = useState<Record<string, { canView: boolean; canCreate: boolean; canEdit: boolean; canDelete: boolean }>>({})
 
   // Barcode Label Designer state
   const [designerProduct, setDesignerProduct] = useState<any>(null)
@@ -533,6 +572,14 @@ export default function Layout(): React.JSX.Element {
   // Sub-panel switchers
   const [purchasesSubTab, setPurchasesSubTab] = useState<'invoice' | 'return' | 'invoice_list' | 'return_list' | 'payments' | 'statement' | 'cheques'>('invoice')
   const [salesSubTab, setSalesSubTab] = useState<'invoice_list' | 'return_list' | 'payments' | 'statement' | 'cheques' | 'installments' | 'quotation' | 'period_sales'>('invoice_list')
+  
+  // Installment Ledger States
+  const [installmentsList, setInstallmentsList] = useState<any[]>([])
+  const [instFilterClient, setInstFilterClient] = useState('')
+  const [instFilterStatus, setInstFilterStatus] = useState('ALL')
+  const [showPayInstModal, setShowPayInstModal] = useState<any | null>(null)
+  const [payInstAmount, setPayInstAmount] = useState('')
+
   const [employeesSubTab, setEmployeesSubTab] = useState<'payroll' | 'deductions'>('payroll')
   const [vaultSubTab, setVaultSubTab] = useState<'cash_in' | 'cash_out' | 'transactions' | 'transfers' | 'earned_discount'>('transactions')
   const [bankSubTab, setBankSubTab] = useState<'deposit' | 'withdraw' | 'statement' | 'transfer_to_vault'>('statement')
@@ -586,6 +633,11 @@ export default function Layout(): React.JSX.Element {
   const [newCliPayVaultId, setNewCliPayVaultId] = useState('main_vault')
   const [newCliPayBankId, setNewCliPayBankId] = useState('')
   const [newCliPayNotes, setNewCliPayNotes] = useState('')
+
+  // Invoice Detail / Edit Modal
+  const [viewInvoiceModal, setViewInvoiceModal] = useState<any | null>(null)
+  const [editInvoiceNotes, setEditInvoiceNotes] = useState('')
+  const [editInvoiceSaving, setEditInvoiceSaving] = useState(false)
 
   const [newCliChequeClientId, setNewCliChequeClientId] = useState('')
   const [newCliChequeNumber, setNewCliChequeNumber] = useState('')
@@ -681,12 +733,153 @@ export default function Layout(): React.JSX.Element {
     if (res.success && res.data) setQuotations(res.data)
   }
 
-  const fetchAuditsList = async () => {
-    const res = await window.api.inventory.listAudits()
-    if (res.success && res.data) setAuditsList(res.data)
+  const fetchAuditsList = async (pageToFetch?: number) => {
+    const page = pageToFetch || auditPage
+    const res = await window.api.inventory.listAudits({
+      page,
+      limit: 10,
+      auditNumber: auditFilterNo || undefined,
+      warehouseId: auditFilterWh || undefined,
+      startDate: auditFilterStart || undefined,
+      endDate: auditFilterEnd || undefined
+    })
+    if (res.success && res.data) {
+      setAuditsList(res.data)
+      if (res.pagination) {
+        setAuditPage(res.pagination.page)
+        setAuditTotalPages(res.pagination.totalPages)
+      }
+    }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const fetchAdjustmentsList = async () => {
+    const res = await window.api.inventory.listAdjustments()
+    if (res.success && res.data) setAdjustmentsList(res.data)
+  }
+
+  const handleCreateAdjustment = async () => {
+    if (!adjustProductId || !adjustQty || isNaN(Number(adjustQty))) {
+      alert(lang === 'ar' ? 'يرجى اختيار المنتج وتحديد كمية صحيحة' : 'Please select product and enter valid quantity')
+      return
+    }
+    const res = await window.api.inventory.createAdjustment({
+      productId: adjustProductId,
+      quantity: Number(adjustQty),
+      reason: adjustReason,
+      notes: adjustNotes,
+      userId: user?.id
+    })
+    if (res.success) {
+      alert(lang === 'ar' ? 'تم تسجيل التسوية بنجاح وتحديث الكمية الحالية!' : 'Adjustment recorded successfully!')
+      setAdjustQty('')
+      setAdjustNotes('')
+      fetchProducts()
+      fetchAdjustmentsList()
+    } else {
+      alert(res.error || 'Failed to record adjustment')
+    }
+  }
+
+  const handleDeleteInvoice = async (invoiceId: string) => {
+    const confirmDelete = window.confirm(
+      lang === 'ar' 
+        ? '⚠️ تحذير هام: هل أنت متأكد من حذف هذه الفاتورة بالكامل؟ سيتم إعادة البضاعة للمخزن وتحديث الحسابات وعكس القيود.' 
+        : 'Are you sure you want to completely delete this invoice?'
+    )
+    if (!confirmDelete) return
+
+    const res = await window.api.sales.delete({ invoiceId, userId: user?.id })
+    if (res.success) {
+      alert(lang === 'ar' ? 'تم حذف الفاتورة وعكس تأثيرها بنجاح!' : 'Invoice deleted and reverted successfully!')
+      fetchSalesInvoices()
+      fetchProducts()
+      fetchLedger()
+    } else {
+      alert(res.error || 'Failed to delete invoice')
+    }
+  }
+
+  const fetchVatReport = async () => {
+    setVatLoading(true)
+    const res = await window.api.reports.getVatReport({ startDate: vatStartDate, endDate: vatEndDate })
+    setVatLoading(false)
+    if (res.success && res.data) {
+      setVatReport(res.data)
+    } else {
+      alert(res.error || 'Failed to generate VAT report')
+    }
+  }
+
+  const handleUpdateTransaction = async () => {
+    if (!editingTransaction || !editTxAmount || isNaN(Number(editTxAmount))) {
+      alert(lang === 'ar' ? 'يرجى إدخال مبلغ صحيح' : 'Please enter valid amount')
+      return
+    }
+    const res = await window.api.vaults.updateTransaction({
+      txId: editingTransaction.id,
+      amount: Number(editTxAmount),
+      notes: editTxNotes,
+      userId: user?.id
+    })
+    if (res.success) {
+      alert(lang === 'ar' ? 'تم تصحيح الحركة بنجاح وتحديث رصيد الخزينة!' : 'Transaction corrected successfully!')
+      setEditingTransaction(null)
+      setEditTxAmount('')
+      setEditTxNotes('')
+      if (vaultOpsId) fetchVaultTransactions(vaultOpsId)
+    } else {
+      alert(res.error || 'Failed to update transaction')
+    }
+  }
+
+  const openPermissionsModal = async (targetUser: any) => {
+    setSelectedUserForPermissions(targetUser)
+    const res = await window.api.permissions.get({ userId: targetUser.id })
+    if (res.success && res.data) {
+      // Map array of permissions to a fast lookup map
+      const map: Record<string, any> = {}
+      res.data.forEach((p: any) => {
+        map[p.module] = {
+          canView: p.canView === 1 || p.canView === true,
+          canCreate: p.canCreate === 1 || p.canCreate === true,
+          canEdit: p.canEdit === 1 || p.canEdit === true,
+          canDelete: p.canDelete === 1 || p.canDelete === true
+        }
+      })
+      setUserPermissionsMap(map)
+    } else {
+      setUserPermissionsMap({})
+    }
+  }
+
+  const handleSaveUserPermissions = async () => {
+    if (!selectedUserForPermissions) return
+
+    // Convert map back to list of updates
+    const permissionsList = Object.keys(userPermissionsMap).map(module => ({
+      module,
+      canView: userPermissionsMap[module].canView ? 1 : 0,
+      canCreate: userPermissionsMap[module].canCreate ? 1 : 0,
+      canEdit: userPermissionsMap[module].canEdit ? 1 : 0,
+      canDelete: userPermissionsMap[module].canDelete ? 1 : 0
+    }))
+
+    const res = await window.api.permissions.save({
+      userId: selectedUserForPermissions.id,
+      permissions: permissionsList
+    })
+
+    if (res.success) {
+      alert(lang === 'ar' ? '✅ تم حفظ وتحديث صلاحيات الموظف بنجاح!' : '✅ Permissions updated successfully!')
+      setSelectedUserForPermissions(null)
+      if (user?.id === selectedUserForPermissions.id) {
+        // If current user modified their own permission, remind them to reload
+        alert(lang === 'ar' ? 'يرجى تسجيل الخروج والدخول مجدداً لتفعيل الصلاحيات الجديدة بالكامل.' : 'Please logout and login again to activate new permissions.')
+      }
+    } else {
+      alert(res.error || 'Failed to save permissions')
+    }
+  }
   const fetchAllStockMovements = async () => {
     const res = await window.api.inventory.listAllMovements()
     if (res.success && res.data) console.log('stock movements loaded', res.data)
@@ -761,6 +954,7 @@ export default function Layout(): React.JSX.Element {
     fetchClientCheques()
     fetchQuotations()
     fetchAuditsList()
+    fetchAdjustmentsList()
     fetchAllStockMovements()
   }, [dbRefreshTrigger, profitsStartDate, profitsEndDate])
 
@@ -810,11 +1004,12 @@ export default function Layout(): React.JSX.Element {
     }
   }
 
+
   useEffect(() => {
-    if (activeView === 'activityLog') {
-      fetchActivityLog()
+    if (salesSubTab === 'installments') {
+      fetchInstallmentsList()
     }
-  }, [activeView, dbRefreshTrigger, activityLogFilters])
+  }, [salesSubTab, instFilterClient, instFilterStatus, dbRefreshTrigger])
 
   const fetchCategories = async () => {
     const res = await window.api.categories.list()
@@ -994,6 +1189,47 @@ export default function Layout(): React.JSX.Element {
     }
   }
 
+  const fetchInstallmentsList = async () => {
+    const filters: any = {}
+    if (instFilterClient) filters.clientId = instFilterClient
+    if (instFilterStatus !== 'ALL') {
+      if (instFilterStatus === 'OVERDUE') {
+        filters.overdue = true
+      } else {
+        filters.status = instFilterStatus
+      }
+    }
+    const res = await window.api.sales.listInstallments(filters)
+    if (res.success && res.data) {
+      setInstallmentsList(res.data)
+    }
+  }
+
+  const handlePayInstallment = async () => {
+    if (!showPayInstModal || !payInstAmount || isNaN(Number(payInstAmount))) {
+      alert(lang === 'ar' ? '⚠️ يرجى إدخال مبلغ صحيح للتحصيل' : '⚠️ Please enter a valid collection amount')
+      return
+    }
+
+    const res = await window.api.sales.payInstallment({
+      installmentId: showPayInstModal.id,
+      amount: Number(payInstAmount),
+      userId: user?.id,
+      shiftId: activeShift?.id
+    })
+
+    if (res.success) {
+      alert(lang === 'ar' ? '✅ تم تحصيل القسط وتحديث الصندوق بنجاح!' : '✅ Installment collected and cash safe updated!')
+      setShowPayInstModal(null)
+      setPayInstAmount('')
+      fetchInstallmentsList()
+      fetchClients()
+      fetchVaults()
+    } else {
+      alert(res.error || 'Failed to pay installment')
+    }
+  }
+
   const fetchLedger = async () => {
     const resEntries = await window.api.ledger.listEntries()
     if (resEntries.success && resEntries.data) {
@@ -1167,6 +1403,17 @@ export default function Layout(): React.JSX.Element {
     }
   }
 
+  // POS Update carton fields (auto-calculates totalQuantity)
+  const updateCartCarton = (id: string, field: 'cartonCount' | 'unitsPerCarton', value: number) => {
+    setCart(prev => prev.map(item => {
+      if (item.id !== id) return item
+      const updated = { ...item, [field]: Math.max(1, value) }
+      updated.totalQuantity = Math.round((updated.cartonCount ?? 1) * (updated.unitsPerCarton ?? 1))
+      updated.quantity = updated.totalQuantity
+      return updated
+    }))
+  }
+
   // POS Remove item
   const removeFromCart = (id: string) => {
     requestManagerApproval(
@@ -1178,10 +1425,111 @@ export default function Layout(): React.JSX.Element {
     )
   }
 
+  // Print Arabic payment receipt for a client payment
+  const handlePrintPaymentReceipt = (payment: any) => {
+    const primaryColor = (settings as any).invoiceColor || '#1a56db'
+    const clientName  = payment.client?.name || '—'
+    const amount      = Number(payment.amount || 0).toFixed(2)
+    const modeLabel   = payment.paymentMode === 'CASH' ? 'نقدي' : 'تحويل بنكي'
+    const account     = payment.paymentMode === 'CASH'
+      ? (payment.vault?.name || 'الخزينة الرئيسية')
+      : (payment.bank?.name  || '—')
+    const dateStr     = new Date(payment.date || Date.now()).toLocaleDateString('ar-EG')
+    const timeStr     = new Date(payment.date || Date.now()).toLocaleTimeString('ar-EG')
+    const receiptNo   = `RCP-${Date.now().toString().slice(-8)}`
+
+    const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <title>وصل دفع - ${clientName}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Cairo',Arial,sans-serif;background:#f1f5f9;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .card{background:#fff;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,.12);max-width:420px;width:100%;overflow:hidden}
+    .header{background:${primaryColor};color:#fff;padding:24px;text-align:center}
+    .header h1{font-size:22px;font-weight:900;margin-bottom:4px}
+    .header p{font-size:11px;opacity:.8}
+    .body{padding:24px}
+    .receipt-no{text-align:center;font-size:11px;color:#94a3b8;margin-bottom:20px;font-family:monospace}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #e2e8f0}
+    .row:last-of-type{border-bottom:none}
+    .row .lbl{font-size:12px;color:#64748b;font-weight:600}
+    .row .val{font-size:13px;font-weight:700;color:#1e293b}
+    .amount-box{background:${primaryColor}18;border:2px solid ${primaryColor};border-radius:12px;padding:16px;text-align:center;margin:20px 0}
+    .amount-box .lbl{font-size:11px;color:${primaryColor};font-weight:700;margin-bottom:6px}
+    .amount-box .val{font-size:32px;font-weight:900;color:${primaryColor}}
+    .footer{background:#f8fafc;padding:16px;text-align:center;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0}
+    .btn-row{display:flex;gap:10px;padding:16px 24px;border-top:1px solid #e2e8f0}
+    .btn{flex:1;padding:10px;border:none;border-radius:8px;font-family:'Cairo',sans-serif;font-size:14px;font-weight:700;cursor:pointer}
+    .btn-print{background:${primaryColor};color:#fff}
+    .btn-close{background:#e2e8f0;color:#475569}
+    @media print{.btn-row{display:none!important}body{background:#fff}
+    .card{box-shadow:none;border-radius:0;max-width:100%}}
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <h1>${settings.storeName || 'المتجر'}</h1>
+    <p>وصل استلام دفعة</p>
+  </div>
+  <div class="body">
+    <div class="receipt-no">رقم الوصل: ${receiptNo}</div>
+    <div class="amount-box">
+      <div class="lbl">المبلغ المستلم</div>
+      <div class="val">${amount} ج.م</div>
+    </div>
+    <div class="row"><span class="lbl">اسم العميل</span><span class="val">${clientName}</span></div>
+    <div class="row"><span class="lbl">التاريخ</span><span class="val">${dateStr}</span></div>
+    <div class="row"><span class="lbl">الوقت</span><span class="val">${timeStr}</span></div>
+    <div class="row"><span class="lbl">طريقة السداد</span><span class="val">${modeLabel}</span></div>
+    <div class="row"><span class="lbl">الحساب / الخزينة</span><span class="val">${account}</span></div>
+    ${payment.notes ? `<div class="row"><span class="lbl">البيان</span><span class="val">${payment.notes}</span></div>` : ''}
+  </div>
+  <div class="footer">${settings.receiptFooter || 'شكراً لسداد الدفعة'}</div>
+  <div class="btn-row">
+    <button class="btn btn-print" onclick="window.print()">🖨️ طباعة</button>
+    <button class="btn btn-close" onclick="window.close()">✕ إغلاق</button>
+  </div>
+</div>
+</body>
+</html>`
+
+    const win = window.open('', '_blank', 'width=500,height=680')
+    if (!win) { alert('يرجى السماح بالنوافذ المنبثقة'); return }
+    win.document.write(html)
+    win.document.close()
+  }
+
+  // Save invoice notes (edit)
+  const handleSaveInvoiceNotes = async () => {
+    if (!viewInvoiceModal) return
+    setEditInvoiceSaving(true)
+    try {
+      const res = await window.api.sales.updateInvoiceNotes({ invoiceId: viewInvoiceModal.id, notes: editInvoiceNotes })
+      if (res.success) {
+        setViewInvoiceModal({ ...viewInvoiceModal, notes: editInvoiceNotes })
+        triggerRefresh()
+      } else {
+        alert(res.error || 'فشل حفظ الملاحظات')
+      }
+    } catch { alert('خطأ أثناء الحفظ') }
+    setEditInvoiceSaving(false)
+  }
+
   // POS Checkout (ZATCA, double-entry, stock, shift)
   const handleCheckout = async () => {
     if (cart.length === 0 || !activeShift) return
-    const subtotal = cart.reduce((sum, item) => sum + (item.sellPrice * item.quantity), 0)
+
+    // Validate: Installment requires a client
+    if (paymentType === 'INSTALLMENT' && !selectedCustomer) {
+      alert(lang === 'ar' ? 'يجب اختيار عميل عند البيع بالآجل' : 'A client must be selected for Installment sales')
+      return
+    }
+
+    const subtotal = cart.reduce((sum, item) => sum + (item.sellPrice * (item.totalQuantity ?? item.quantity)), 0)
     const discountVal = Number(posDiscount || 0)
     const netTotal = subtotal - discountVal
     
@@ -1197,10 +1545,18 @@ export default function Layout(): React.JSX.Element {
         subtotal,
         discount: discountVal,
         totalAmount: netTotal,
-        paidAmount: paymentType === 'CREDIT' ? 0 : netTotal,
+        paidAmount: (paymentType === 'CREDIT' || paymentType === 'INSTALLMENT') ? 0 : netTotal,
         paymentType,
         shiftId: activeShift.id,
-        items: cart.map(item => ({ productId: item.id, quantity: item.quantity, sellPrice: item.sellPrice })),
+        items: cart.map(item => ({
+          productId: item.id,
+          quantity: item.totalQuantity ?? item.quantity,
+          sellPrice: item.sellPrice,
+          discount: item.discount ?? 0,
+          cartonCount: item.cartonCount ?? 1,
+          unitsPerCarton: item.unitsPerCarton ?? 1,
+          totalQuantity: item.totalQuantity ?? item.quantity
+        })),
         notes: ''
       })
 
@@ -1235,140 +1591,217 @@ export default function Layout(): React.JSX.Element {
     }
   }
 
-  // Handle Export Invoice PDF
+  // Handle Export Invoice PDF - Arabic HTML print window
   const handleExportInvoicePDF = async (invoice: any) => {
     try {
-      const { jsPDF } = await import('jspdf')
-      const { default: autoTable } = await import('jspdf-autotable')
       const QRCode = await import('qrcode')
 
-      // Create PDF document
-      const doc = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4'
-      })
+      const primaryColor = (settings as any).invoiceColor || '#1a56db'
+      const showVat     = (settings as any).invoiceShowVat !== false
+      const showQr      = (settings as any).invoiceShowQr  !== false
+      const headerNote  = (settings as any).receiptHeaderNote || ''
 
-      // Setup document styling & fonts (fallback to standard PDF fonts; since standard fonts don't support Arabic easily, we will write text layout clearly)
-      // Since jsPDF standard fonts don't support Arabic Unicode by default without loaded custom font file,
-      // we will write text using standard layout with English primarily, or fallback gracefully.
-      // Let's layout a professional invoice structure.
-      doc.setFont('Helvetica', 'normal')
+      const subtotalAmt = invoice.subtotal   ?? invoice.totalAmount ?? 0
+      const discountAmt = invoice.discount   ?? 0
+      const totalAmt    = invoice.totalAmount ?? 0
+      const vatAmt      = showVat ? totalAmt * (14 / 114) : 0
 
-      // Store Details (Header)
-      doc.setFontSize(20)
-      doc.setTextColor(40, 40, 40)
-      doc.text(settings.storeName || 'Servio POS', 14, 20)
+      const paymentLabel = invoice.paymentType === 'INSTALLMENT' ? 'آجل' :
+                           invoice.paymentType === 'CASH'        ? 'نقدي' :
+                           invoice.paymentType === 'CARD'        ? 'شبكة' :
+                           invoice.paymentType || ''
 
-      doc.setFontSize(9)
-      doc.setTextColor(100, 100, 100)
-      doc.text(`Address / العنوان: ${settings.storeAddress || '-'}`, 14, 26)
-      doc.text(`Phone / الهاتف: ${settings.storePhone || '-'}`, 14, 31)
-      if (settings.taxNumber) {
-        doc.text(`Tax Reg / الرقم الضريبي: ${settings.taxNumber}`, 14, 36)
-      }
-      if (settings.commercialRegister) {
-        doc.text(`CR / السجل التجاري: ${settings.commercialRegister}`, 14, 41)
-      }
-
-      // Invoice metadata (Right aligned)
-      doc.setFontSize(10)
-      doc.setTextColor(40, 40, 40)
-      doc.text(`Invoice No / رقم الفاتورة: ${invoice.invoiceNumber}`, 140, 20)
-      doc.text(`Date / التاريخ: ${new Date(invoice.date).toLocaleString()}`, 140, 26)
-      doc.text(`Payment / طريقة الدفع: ${invoice.paymentType}`, 140, 31)
-      doc.text(`Cashier / الكاشير: ${user?.name || ''}`, 140, 36)
-
-      // Horizontal separator line
-      doc.setDrawColor(200, 200, 200)
-      doc.line(14, 46, 196, 46)
-
-      // Table Items
-      const tableHeaders = [
-        ['#', 'Product / الصنف', 'Qty / الكمية', 'Price / السعر', 'Total / الإجمالي']
-      ]
-
-      const tableRows = (invoice.items || []).map((item: any, index: number) => {
-        const name = item.product?.name || item.name || 'Product'
-        const qty = item.quantity || 1
-        const price = item.sellPrice || item.price || 0
-        const total = qty * price
-        return [
-          index + 1,
-          name,
-          qty.toString(),
-          price.toFixed(2),
-          total.toFixed(2)
-        ]
-      })
-
-      autoTable(doc, {
-        startY: 50,
-        head: tableHeaders,
-        body: tableRows,
-        theme: 'striped',
-        headStyles: { fillColor: [63, 81, 181] },
-        styles: { fontSize: 9, font: 'Helvetica' },
-        columnStyles: {
-          0: { cellWidth: 10 },
-          1: { cellWidth: 90 },
-          2: { cellWidth: 20, halign: 'center' },
-          3: { cellWidth: 30, halign: 'right' },
-          4: { cellWidth: 30, halign: 'right' }
-        }
-      })
-
-      // Calculations block
-      const finalY = (doc as any).lastAutoTable.finalY + 10
-      doc.setFontSize(10)
-      doc.setTextColor(40, 40, 40)
-
-      const subtotal = invoice.subtotal || invoice.totalAmount || 0
-      const discount = invoice.discount || 0
-      const totalAmount = invoice.totalAmount || 0
-      // Calculate 14% VAT (included)
-      const vatAmount = totalAmount * (14 / 114)
-
-      doc.text(`Subtotal / الإجمالي الفرعي:`, 110, finalY)
-      doc.text(`${subtotal.toFixed(2)} EGP`, 170, finalY, { align: 'right' })
-
-      doc.text(`Discount / الخصم:`, 110, finalY + 5)
-      doc.text(`-${discount.toFixed(2)} EGP`, 170, finalY + 5, { align: 'right' })
-
-      doc.setFont('Helvetica', 'bold')
-      doc.text(`Total / الإجمالي النهائي:`, 110, finalY + 10)
-      doc.text(`${totalAmount.toFixed(2)} EGP`, 170, finalY + 10, { align: 'right' })
-
-      doc.setFont('Helvetica', 'normal')
-      doc.setFontSize(8)
-      doc.setTextColor(120, 120, 120)
-      doc.text(`Includes 14% VAT / شامل 14% ضريبة القيمة المضافة: ${vatAmount.toFixed(2)} EGP`, 110, finalY + 15)
-
-      // QR Code generation
-      // Generate QR Code containing the invoice payload
-      const qrPayload = JSON.stringify({
-        store: settings.storeName,
-        taxNumber: settings.taxNumber || '',
-        date: invoice.date,
-        total: totalAmount,
-        vat: vatAmount
-      })
-
-      const qrDataUrl = await QRCode.toDataURL(qrPayload)
-      doc.addImage(qrDataUrl, 'PNG', 14, finalY, 35, 35)
-
-      // Footer
-      if (settings.receiptFooter) {
-        doc.setFontSize(8)
-        doc.setTextColor(120, 120, 120)
-        doc.text(settings.receiptFooter, 14, finalY + 45)
+      // QR code
+      let qrDataUrl = ''
+      if (showQr) {
+        const qrPayload = JSON.stringify({
+          store: settings.storeName,
+          tax: settings.taxNumber || '',
+          inv: invoice.invoiceNumber,
+          date: invoice.date,
+          total: totalAmt,
+          vat: vatAmt.toFixed(2)
+        })
+        qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 120, margin: 1 })
       }
 
-      // Save the PDF file
-      doc.save(`invoice-${invoice.invoiceNumber}.pdf`)
+      // Build items rows
+      const itemsHtml = (invoice.items || []).map((item: any, idx: number) => {
+        const name          = item.product?.name || item.name || 'صنف'
+        const qty           = item.totalQuantity ?? item.quantity ?? 1
+        const cartonCount   = item.cartonCount   ?? 1
+        const unitsPerCarton= item.unitsPerCarton ?? 1
+        const price         = item.sellPrice || item.price || 0
+        const rowTotal      = qty * price
+        const qtyDisplay    = (cartonCount > 1 || unitsPerCarton > 1)
+          ? `${qty} <span style="font-size:10px;color:#888">(${cartonCount}×${unitsPerCarton})</span>`
+          : `${qty}`
+        const bg = idx % 2 === 0 ? '#f8fafc' : '#fff'
+        return `
+          <tr style="background:${bg}">
+            <td style="padding:7px 10px;text-align:center;color:#666">${idx + 1}</td>
+            <td style="padding:7px 10px;font-weight:600">${name}</td>
+            <td style="padding:7px 10px;text-align:center">${qtyDisplay}</td>
+            <td style="padding:7px 10px;text-align:center">${price.toFixed(2)}</td>
+            <td style="padding:7px 10px;text-align:center;font-weight:700;color:${primaryColor}">${rowTotal.toFixed(2)}</td>
+          </tr>`
+      }).join('')
+
+      const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <title>فاتورة ${invoice.invoiceNumber}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Cairo',Arial,sans-serif;color:#1e293b;background:#fff;font-size:13px;direction:rtl}
+    .page{max-width:780px;margin:0 auto;padding:28px}
+    /* Header */
+    .header{display:flex;align-items:flex-start;justify-content:space-between;padding-bottom:18px;border-bottom:3px solid ${primaryColor};margin-bottom:18px}
+    .store-name{font-size:26px;font-weight:900;color:${primaryColor};letter-spacing:-0.5px}
+    .store-meta{font-size:11px;color:#64748b;margin-top:5px;line-height:1.8}
+    .inv-badge{background:${primaryColor};color:#fff;border-radius:10px;padding:8px 18px;text-align:center;min-width:180px}
+    .inv-badge .inv-num{font-size:18px;font-weight:900;letter-spacing:1px}
+    .inv-badge .inv-label{font-size:10px;opacity:.8;margin-bottom:2px}
+    /* Header note */
+    .header-note{background:${primaryColor}18;border-right:4px solid ${primaryColor};padding:8px 14px;border-radius:6px;margin-bottom:14px;color:${primaryColor};font-weight:700;font-size:12px}
+    /* Meta row */
+    .meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+    .meta-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px}
+    .meta-card .lbl{font-size:9px;color:#94a3b8;font-weight:700;margin-bottom:2px;text-transform:uppercase}
+    .meta-card .val{font-size:12px;font-weight:700;color:#1e293b}
+    /* Table */
+    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+    thead tr{background:${primaryColor};color:#fff}
+    thead th{padding:9px 10px;font-size:11px;font-weight:700;text-align:center}
+    thead th:nth-child(2){text-align:right}
+    tbody tr:last-child{border-bottom:2px solid ${primaryColor}}
+    td{border-bottom:1px solid #f1f5f9;font-size:12px}
+    /* Totals */
+    .totals-row{display:flex;justify-content:space-between;align-items:flex-start;margin-top:4px}
+    .totals-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 20px;min-width:240px}
+    .totals-line{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;color:#475569}
+    .totals-line.discount{color:#ef4444}
+    .totals-line.grand{border-top:2px solid ${primaryColor};margin-top:6px;padding-top:8px;font-size:16px;font-weight:900;color:${primaryColor}}
+    .vat-note{font-size:10px;color:#94a3b8;margin-top:6px}
+    /* QR + footer */
+    .bottom{display:flex;align-items:flex-end;justify-content:space-between;margin-top:20px;padding-top:16px;border-top:2px dashed #e2e8f0}
+    .footer-txt{font-size:12px;color:#64748b;max-width:400px;line-height:1.7;white-space:pre-wrap}
+    .footer-brand{font-size:10px;color:#cbd5e1;margin-top:8px}
+    @media print{
+      body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .no-print{display:none!important}
+    }
+  </style>
+</head>
+<body>
+<div class="no-print" style="padding:12px;background:#1e293b;text-align:center;position:sticky;top:0;z-index:99">
+  <button onclick="window.print()" style="background:${primaryColor};color:#fff;border:none;padding:10px 32px;border-radius:8px;font-family:'Cairo',sans-serif;font-size:14px;font-weight:700;cursor:pointer;margin-left:12px">🖨️ طباعة الفاتورة</button>
+  <button onclick="window.close()" style="background:#475569;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-family:'Cairo',sans-serif;font-size:14px;font-weight:700;cursor:pointer">✕ إغلاق</button>
+</div>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="store-name">${settings.storeName || 'المتجر'}</div>
+      <div class="store-meta">
+        ${settings.storeAddress ? `📍 ${settings.storeAddress}<br/>` : ''}
+        ${settings.storePhone  ? `📞 ${settings.storePhone}<br/>` : ''}
+        ${settings.mobile1     ? `📱 ${settings.mobile1}<br/>` : ''}
+        ${settings.taxNumber   ? `الرقم الضريبي: ${settings.taxNumber}<br/>` : ''}
+        ${settings.commercialRegister ? `السجل التجاري: ${settings.commercialRegister}` : ''}
+      </div>
+    </div>
+    <div class="inv-badge">
+      <div class="inv-label">رقم الفاتورة</div>
+      <div class="inv-num">${invoice.invoiceNumber}</div>
+    </div>
+  </div>
+
+  ${headerNote ? `<div class="header-note">📌 ${headerNote}</div>` : ''}
+
+  <!-- Meta -->
+  <div class="meta-grid">
+    <div class="meta-card">
+      <div class="lbl">التاريخ</div>
+      <div class="val">${new Date(invoice.date).toLocaleDateString('ar-EG')}</div>
+    </div>
+    <div class="meta-card">
+      <div class="lbl">الوقت</div>
+      <div class="val">${new Date(invoice.date).toLocaleTimeString('ar-EG')}</div>
+    </div>
+    <div class="meta-card">
+      <div class="lbl">طريقة الدفع</div>
+      <div class="val">${paymentLabel}</div>
+    </div>
+    <div class="meta-card">
+      <div class="lbl">الكاشير</div>
+      <div class="val">${user?.name || '—'}</div>
+    </div>
+    ${invoice.client?.name ? `<div class="meta-card" style="grid-column:span 2"><div class="lbl">العميل</div><div class="val">${invoice.client.name}</div></div>` : ''}
+  </div>
+
+  <!-- Items Table -->
+  <table>
+    <thead>
+      <tr>
+        <th style="width:36px">#</th>
+        <th style="text-align:right">اسم الصنف</th>
+        <th>الكمية</th>
+        <th>سعر الوحدة</th>
+        <th>الإجمالي</th>
+      </tr>
+    </thead>
+    <tbody>${itemsHtml}</tbody>
+  </table>
+
+  <!-- Totals + QR -->
+  <div class="totals-row">
+    ${showQr && qrDataUrl ? `
+    <div style="text-align:center">
+      <img src="${qrDataUrl}" width="110" height="110" style="border:3px solid ${primaryColor};border-radius:8px;padding:4px"/>
+      <div style="font-size:9px;color:#94a3b8;margin-top:4px">امسح للتحقق</div>
+    </div>` : '<div></div>'}
+
+    <div class="totals-box">
+      <div class="totals-line">
+        <span>الإجمالي الفرعي</span>
+        <span>${subtotalAmt.toFixed(2)} ج.م</span>
+      </div>
+      ${discountAmt > 0 ? `<div class="totals-line discount"><span>الخصم</span><span>- ${discountAmt.toFixed(2)} ج.م</span></div>` : ''}
+      ${showVat ? `<div class="totals-line"><span>ضريبة القيمة المضافة 14%</span><span>${vatAmt.toFixed(2)} ج.م</span></div>` : ''}
+      <div class="totals-line grand">
+        <span>الإجمالي النهائي</span>
+        <span>${totalAmt.toFixed(2)} ج.م</span>
+      </div>
+      ${showVat ? `<div class="vat-note">* الضريبة مشمولة في السعر</div>` : ''}
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="bottom">
+    <div>
+      ${settings.receiptFooter ? `<div class="footer-txt">💬 ${settings.receiptFooter}</div>` : ''}
+      <div class="footer-brand">Powered by Servio POS</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>`
+
+      const win = window.open('', '_blank', 'width=860,height=1000,scrollbars=yes')
+      if (!win) {
+        alert(lang === 'ar' ? 'يرجى السماح بالنوافذ المنبثقة لطباعة الفاتورة' : 'Please allow popups to print the invoice')
+        return
+      }
+      win.document.write(html)
+      win.document.close()
     } catch (err: any) {
       console.error(err)
-      alert(lang === 'ar' ? 'فشل تصدير ملف PDF' : 'Failed to export PDF: ' + err.message)
+      alert(lang === 'ar' ? 'فشل تصدير الفاتورة' : 'Failed to export invoice: ' + err.message)
     }
   }
 
@@ -1591,7 +2024,7 @@ export default function Layout(): React.JSX.Element {
     setHeldInvoices(prev => prev.filter((_, i) => i !== index))
   }
 
-  const posSubtotal = cart.reduce((sum, item) => sum + (item.sellPrice * item.quantity), 0)
+  const posSubtotal = cart.reduce((sum, item) => sum + (item.sellPrice * (item.totalQuantity ?? item.quantity)), 0)
   const posNetTotal = posSubtotal - Number(posDiscount || 0)
   const changeValue = receivedAmount ? Math.max(0, Number(receivedAmount) - posNetTotal) : 0
 
@@ -1804,6 +2237,8 @@ export default function Layout(): React.JSX.Element {
                   <th className="px-4 text-center w-12 py-2">#</th>
                   <th className="px-4 text-right rtl:text-right ltr:text-left py-2">{lang === 'ar' ? 'اسم الصنف' : 'Item Description'}</th>
                   <th className="px-4 text-center w-24 py-2">{lang === 'ar' ? 'الكمية' : 'Qty'}</th>
+                  <th className="px-2 text-center w-20 py-2">{lang === 'ar' ? 'كرتون' : 'Crtn'}</th>
+                  <th className="px-2 text-center w-20 py-2">{lang === 'ar' ? 'قطعة' : 'Unit'}</th>
                   <th className="px-4 text-left rtl:text-left ltr:text-right py-2">{lang === 'ar' ? 'سعر الوحدة' : 'Unit Price'}</th>
                   <th className="px-4 text-left rtl:text-left ltr:text-right py-2">{lang === 'ar' ? 'الإجمالي' : 'Total'}</th>
                   <th className="px-4 w-10 py-2"></th>
@@ -1812,19 +2247,37 @@ export default function Layout(): React.JSX.Element {
               <tbody className="text-body-md text-sm divide-y divide-outline-variant/20">
                 {cart.map((item, index) => (
                   <tr key={item.id} className="hover:bg-surface-bright transition-colors group h-10">
-                    <td className="px-4 text-center text-on-surface-variant font-data-mono">{String(index + 1).padStart(2, '0')}</td>
+                    <td className="px-4 text-center text-on-surface-variant font-data-mono">{String(index + 1).padStart(2, '00')}</td>
                     <td className="px-4 font-bold text-on-surface text-right rtl:text-right ltr:text-left">{item.name}</td>
                     <td className="px-4 text-center">
-                      <input 
+                      <span className="font-data-mono text-xs font-bold text-secondary">
+                        {item.totalQuantity ?? item.quantity}
+                      </span>
+                    </td>
+                    <td className="px-2 text-center">
+                      <input
                         type="number"
                         min="1"
-                        value={item.quantity}
-                        onChange={(e) => updateCartQty(item.id, Math.max(1, Number(e.target.value)))}
-                        className="w-16 bg-surface-container-highest border border-outline-variant rounded text-center h-8 focus:border-primary outline-none font-data-mono text-xs"
+                        step="1"
+                        value={item.cartonCount ?? 1}
+                        onChange={(e) => updateCartCarton(item.id, 'cartonCount', Math.max(1, Number(e.target.value)))}
+                        className="w-14 bg-surface-container-highest border border-outline-variant rounded text-center h-8 focus:border-primary outline-none font-data-mono text-xs"
+                        title={lang === 'ar' ? 'عدد الكراتين' : 'Cartons'}
+                      />
+                    </td>
+                    <td className="px-2 text-center">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={item.unitsPerCarton ?? 1}
+                        onChange={(e) => updateCartCarton(item.id, 'unitsPerCarton', Math.max(1, Number(e.target.value)))}
+                        className="w-14 bg-surface-container-highest border border-outline-variant rounded text-center h-8 focus:border-primary outline-none font-data-mono text-xs"
+                        title={lang === 'ar' ? 'قطع في الكرتون' : 'Units/Crtn'}
                       />
                     </td>
                     <td className="px-4 text-left rtl:text-left ltr:text-right font-data-mono text-on-surface-variant">{item.sellPrice.toFixed(2)}</td>
-                    <td className="px-4 text-left rtl:text-left ltr:text-right font-bold text-secondary font-data-mono">{(item.sellPrice * item.quantity).toFixed(2)}</td>
+                    <td className="px-4 text-left rtl:text-left ltr:text-right font-bold text-secondary font-data-mono">{(item.sellPrice * (item.totalQuantity ?? item.quantity)).toFixed(2)}</td>
                     <td className="px-4 text-center">
                       <button 
                         onClick={() => removeFromCart(item.id)}
@@ -1944,20 +2397,17 @@ export default function Layout(): React.JSX.Element {
                 <span className="text-[10px] text-outline font-bold mb-1.5 block uppercase tracking-wide">
                   {lang === 'ar' ? 'قنوات الدفع المحاسبية' : 'Accounting Payment Channels'}
                 </span>
-                <div className="grid grid-cols-3 gap-1 mb-2">
+                <div className="grid grid-cols-2 gap-1 mb-2">
                   {[
-                    { id: 'CASH', label: lang === 'ar' ? 'نقدي' : 'Cash' },
-                    { id: 'CARD', label: lang === 'ar' ? 'شبكة' : 'Card' },
-                    { id: 'CREDIT', label: lang === 'ar' ? 'آجل' : 'Credit' }
+                    { id: 'CASH', label: lang === 'ar' ? '💵 نقدي' : '💵 Cash' },
+                    { id: 'INSTALLMENT', label: lang === 'ar' ? '📋 آجل' : '📋 Installment' }
                   ].map(mode => (
                     <button
                       key={mode.id}
                       type="button"
                       onClick={() => {
                         setPaymentType(mode.id)
-                        if (mode.id === 'CARD') {
-                          setReceivedAmount(posNetTotal.toFixed(2))
-                        } else if (mode.id === 'CREDIT') {
+                        if (mode.id === 'INSTALLMENT') {
                           setReceivedAmount('0.00')
                         } else {
                           setReceivedAmount('')
@@ -1969,9 +2419,9 @@ export default function Layout(): React.JSX.Element {
                           }, 50)
                         }
                       }}
-                      className={`py-1 text-[10px] font-bold rounded text-center cursor-pointer transition-colors border ${
+                      className={`py-1.5 text-[11px] font-bold rounded text-center cursor-pointer transition-all border ${
                         paymentType === mode.id
-                          ? 'bg-primary border-primary text-on-primary'
+                          ? 'bg-primary border-primary text-on-primary shadow-md scale-[1.02]'
                           : 'bg-surface-container-highest border-outline-variant/20 text-on-surface hover:bg-surface-bright'
                       }`}
                     >
@@ -1980,6 +2430,14 @@ export default function Layout(): React.JSX.Element {
                   ))}
                 </div>
 
+                {/* Installment client warning */}
+                {paymentType === 'INSTALLMENT' && !selectedCustomer && (
+                  <div className="mb-2 px-2 py-1.5 rounded bg-error-container/40 border border-error/40 text-error text-[10px] font-bold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">warning</span>
+                    {lang === 'ar' ? 'يجب اختيار عميل للبيع الآجل' : 'Select a client for Installment'}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3 mt-1">
                   <div className="flex flex-col gap-1">
                     <label className="text-[9px] text-on-surface-variant font-label-sm">{t[lang].receivedAmount}</label>
@@ -1987,8 +2445,8 @@ export default function Layout(): React.JSX.Element {
                       ref={receivedAmountInputRef}
                       type="text"
                       inputMode="decimal"
-                      disabled={paymentType === 'CREDIT'}
-                      value={paymentType === 'CREDIT' ? '0.00' : receivedAmount}
+                      disabled={paymentType === 'INSTALLMENT'}
+                      value={paymentType === 'INSTALLMENT' ? '0.00' : receivedAmount}
                       onChange={(e) => {
                         const val = e.target.value
                         const arabicNums = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩']
@@ -2007,7 +2465,7 @@ export default function Layout(): React.JSX.Element {
                   <div className="flex flex-col gap-1 justify-end items-end text-right">
                     <span className="text-[9px] text-on-surface-variant font-label-sm">{t[lang].changeAmount}</span>
                     <span className="font-data-mono font-bold text-secondary text-sm">
-                      {paymentType === 'CREDIT' ? '0.00' : changeValue.toFixed(2)}
+                      {paymentType === 'INSTALLMENT' ? '0.00' : changeValue.toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -2043,9 +2501,9 @@ export default function Layout(): React.JSX.Element {
               <button 
                 id="pos-checkout-btn"
                 onClick={handleCheckout}
-                disabled={cart.length === 0}
+                disabled={cart.length === 0 || (paymentType === 'INSTALLMENT' && !selectedCustomer)}
                 className={`w-full h-12 rounded font-bold text-sm flex items-center justify-center gap-2 transition-all ${
-                  cart.length === 0
+                  cart.length === 0 || (paymentType === 'INSTALLMENT' && !selectedCustomer)
                     ? 'bg-surface-container-highest text-outline border border-outline-variant/30 cursor-not-allowed'
                     : 'bg-secondary-container text-white hover:brightness-110 active:scale-[0.98] cursor-pointer'
                 }`}
@@ -2119,6 +2577,14 @@ export default function Layout(): React.JSX.Element {
             }`}
           >
             {lang === 'ar' ? 'جرد المخازن' : 'Physical Inventory Audit'}
+          </button>
+          <button
+            onClick={() => { setInventorySubTab('adjustments'); fetchAdjustmentsList(); }}
+            className={`px-4 py-1.5 rounded text-xs font-bold cursor-pointer transition-colors ${
+              inventorySubTab === 'adjustments' ? 'bg-primary-container text-white' : 'text-outline hover:text-white'
+            }`}
+          >
+            {lang === 'ar' ? 'تسوية المخزون والهالك' : 'Stock Adjustments'}
           </button>
         </div>
 
@@ -2619,6 +3085,33 @@ export default function Layout(): React.JSX.Element {
                     className="w-full bg-surface-container-lowest border border-outline-variant rounded p-1.5 text-xs text-white"
                   />
                 </div>
+
+                {/* Partial Audit Filters */}
+                <div className="pt-2 border-t border-outline-variant/60">
+                  <label className="block text-[10px] font-bold text-primary mb-1">
+                    {lang === 'ar' ? '🔍 جرد جزئي: بحث بالاسم أو الباركود' : '🔍 Partial Audit: Search Name / Barcode'}
+                  </label>
+                  <input
+                    type="text"
+                    value={auditSearchQuery}
+                    onChange={(e) => setAuditSearchQuery(e.target.value)}
+                    placeholder={lang === 'ar' ? 'بحث عن منتج معين لتسويته بشكل منفرد...' : 'Search specific product to audit...'}
+                    className="w-full bg-surface-container-lowest border border-outline-variant rounded p-1.5 text-xs text-white"
+                  />
+                </div>
+                <div className="pt-2 border-t border-outline-variant/60">
+                  <label className="block text-[10px] font-bold text-primary mb-1">
+                    {lang === 'ar' ? '📂 جرد جزئي: تصفية بحسب التصنيف' : '📂 Partial Audit: Filter by Category'}
+                  </label>
+                  <select
+                    value={auditSelectedCategory}
+                    onChange={(e) => setAuditSelectedCategory(e.target.value)}
+                    className="w-full bg-surface-container-lowest border border-outline-variant rounded p-1.5 text-xs text-on-surface cursor-pointer"
+                  >
+                    <option value="">{lang === 'ar' ? 'عرض كافة التصنيفات (جرد كامل)' : 'All Categories (Full Audit)'}</option>
+                    {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                </div>
               </div>
 
               {/* Items grid table */}
@@ -2634,32 +3127,42 @@ export default function Layout(): React.JSX.Element {
                     </tr>
                   </thead>
                   <tbody className="text-xs divide-y divide-outline-variant/20 font-data-mono">
-                    {products.map(p => {
-                      const actual = auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : p.currentStock
-                      const diff = actual - p.currentStock
-                      const diffColor = diff < 0 ? 'text-red-500 font-bold' : diff > 0 ? 'text-green-500 font-bold' : 'text-outline'
+                    {(() => {
+                      const filteredProducts = products.filter(p => {
+                        const matchCat = !auditSelectedCategory || p.category === auditSelectedCategory
+                        const matchSearch = !auditSearchQuery || 
+                          p.name.toLowerCase().includes(auditSearchQuery.toLowerCase()) || 
+                          p.barcode.includes(auditSearchQuery)
+                        return matchCat && matchSearch
+                      })
 
-                      return (
-                        <tr key={p.id} className="hover:bg-surface-bright transition-colors h-11">
-                          <td className="px-4 text-right rtl:text-right ltr:text-left font-bold text-white font-sans">{p.name}</td>
-                          <td className="px-4 text-outline">{p.barcode}</td>
-                          <td className="px-4 text-center text-white">{p.currentStock}</td>
-                          <td className="px-4 text-center">
-                            <input
-                              type="number"
-                              value={auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : ''}
-                              placeholder={p.currentStock.toString()}
-                              onChange={(e) => {
-                                const val = e.target.value === '' ? p.currentStock : parseInt(e.target.value) || 0
-                                setAuditItemsMap({ ...auditItemsMap, [p.id]: val })
-                              }}
-                              className="w-24 text-center bg-surface-container border border-outline-variant rounded p-1 text-xs text-white"
-                            />
-                          </td>
-                          <td className={`px-4 text-center ${diffColor}`}>{diff > 0 ? `+${diff}` : diff}</td>
-                        </tr>
-                      )
-                    })}
+                      return filteredProducts.map(p => {
+                        const actual = auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : p.currentStock
+                        const diff = actual - p.currentStock
+                        const diffColor = diff < 0 ? 'text-red-500 font-bold' : diff > 0 ? 'text-green-500 font-bold' : 'text-outline'
+
+                        return (
+                          <tr key={p.id} className="hover:bg-surface-bright transition-colors h-11">
+                            <td className="px-4 text-right rtl:text-right ltr:text-left font-bold text-white font-sans">{p.name}</td>
+                            <td className="px-4 text-outline">{p.barcode}</td>
+                            <td className="px-4 text-center text-white">{p.currentStock}</td>
+                            <td className="px-4 text-center">
+                              <input
+                                type="number"
+                                value={auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : ''}
+                                placeholder={p.currentStock.toString()}
+                                onChange={(e) => {
+                                  const val = e.target.value === '' ? p.currentStock : parseInt(e.target.value) || 0
+                                  setAuditItemsMap({ ...auditItemsMap, [p.id]: val })
+                                }}
+                                className="w-24 text-center bg-surface-container border border-outline-variant rounded p-1 text-xs text-white"
+                              />
+                            </td>
+                            <td className={`px-4 text-center ${diffColor}`}>{diff > 0 ? `+${diff}` : diff}</td>
+                          </tr>
+                        )
+                      })
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -2669,14 +3172,28 @@ export default function Layout(): React.JSX.Element {
                 <div className="text-xs space-y-1">
                   <div>
                     <span className="text-outline">{lang === 'ar' ? 'إجمالي الأصناف المجرودة: ' : 'Total Audited Items: '}</span>
-                    <span className="font-bold text-white">{products.length}</span>
+                    <span className="font-bold text-white">
+                      {products.filter(p => {
+                        const matchCat = !auditSelectedCategory || p.category === auditSelectedCategory
+                        const matchSearch = !auditSearchQuery || 
+                          p.name.toLowerCase().includes(auditSearchQuery.toLowerCase()) || 
+                          p.barcode.includes(auditSearchQuery)
+                        return matchCat && matchSearch
+                      }).length}
+                    </span>
                   </div>
                   <div>
                     <span className="text-outline">{lang === 'ar' ? 'عجز/زيادة كلي: ' : 'Net Discrepancy: '}</span>
                     <span className="font-bold text-secondary">
                       {(() => {
                         let totalDiff = 0
-                        products.forEach(p => {
+                        products.filter(p => {
+                          const matchCat = !auditSelectedCategory || p.category === auditSelectedCategory
+                          const matchSearch = !auditSearchQuery || 
+                            p.name.toLowerCase().includes(auditSearchQuery.toLowerCase()) || 
+                            p.barcode.includes(auditSearchQuery)
+                          return matchCat && matchSearch
+                        }).forEach(p => {
                           const actual = auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : p.currentStock
                           totalDiff += (actual - p.currentStock)
                         })
@@ -2693,7 +3210,15 @@ export default function Layout(): React.JSX.Element {
                     }
                     if (!user) return
 
-                    const items = products.map(p => {
+                    const activeProducts = products.filter(p => {
+                      const matchCat = !auditSelectedCategory || p.category === auditSelectedCategory
+                      const matchSearch = !auditSearchQuery || 
+                        p.name.toLowerCase().includes(auditSearchQuery.toLowerCase()) || 
+                        p.barcode.includes(auditSearchQuery)
+                      return matchCat && matchSearch
+                    })
+
+                    const items = activeProducts.map(p => {
                       const actual = auditItemsMap[p.id] !== undefined ? auditItemsMap[p.id] : p.currentStock
                       return {
                         productId: p.id,
@@ -2703,16 +3228,25 @@ export default function Layout(): React.JSX.Element {
                       }
                     })
 
+                    // Only audit products that actually have differences, to avoid bloating logs
+                    const auditedItems = items.filter(it => it.difference !== 0)
+                    if (auditedItems.length === 0) {
+                      alert(lang === 'ar' ? '⚠️ لا توجد فروقات بين الرصيد الدفتري والفعلي للأصناف المعروضة لحفظها!' : '⚠️ No differences found to record in the audit session.')
+                      return
+                    }
+
                     const res = await window.api.inventory.createAudit({
                       warehouseId: auditWarehouseId,
                       userId: user.id,
-                      notes: auditNotes,
-                      items
+                      notes: auditNotes + (auditSelectedCategory ? ` (جرد تصنيف: ${auditSelectedCategory})` : ''),
+                      items: auditedItems
                     })
 
                     if (res.success) {
-                      alert(lang === 'ar' ? '✅ تم حفظ واعتماد جلسة الجرد بنجاح وتعديل رصيد المخزن' : '✅ Audit session logged and stock updated successfully')
+                      alert(lang === 'ar' ? '✅ تم حفظ واعتماد جلسة الجرد بنجاح وتعديل رصيد المخزن للأصناف المعنية!' : '✅ Audit session logged and stock updated successfully for selected products!')
                       setAuditNotes('')
+                      setAuditSearchQuery('')
+                      setAuditSelectedCategory('')
                       setAuditItemsMap({})
                       setDbRefreshTrigger(prev => prev + 1)
                     } else {
@@ -2729,10 +3263,52 @@ export default function Layout(): React.JSX.Element {
 
             {/* Right Column: Historical Audits List */}
             <section className="w-1/3 border border-outline-variant p-4 bg-surface-container-lowest rounded-xl overflow-hidden flex flex-col h-full">
-              <h3 className="text-primary font-bold text-sm border-b border-outline-variant pb-2 mb-4 flex items-center gap-1.5 flex-shrink-0">
+              <h3 className="text-primary font-bold text-sm border-b border-outline-variant pb-2 mb-3 flex items-center gap-1.5 flex-shrink-0">
                 <span className="material-symbols-outlined text-primary">history</span>
                 {lang === 'ar' ? 'سجل جلسات الجرد المعتمدة' : 'Archived Audit Sessions'}
               </h3>
+
+              {/* Filtering Controls */}
+              <div className="flex flex-col gap-2 mb-3 bg-surface-container/40 p-2.5 rounded border border-outline-variant/60 flex-shrink-0">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <input
+                    type="text"
+                    placeholder={lang === 'ar' ? 'رقم الجلسة...' : 'Audit Number...'}
+                    value={auditFilterNo}
+                    onChange={(e) => setAuditFilterNo(e.target.value)}
+                    className="bg-surface border border-outline-variant rounded px-2 py-1 text-[11px] text-white"
+                  />
+                  <select
+                    value={auditFilterWh}
+                    onChange={(e) => setAuditFilterWh(e.target.value)}
+                    className="bg-surface border border-outline-variant rounded px-2 py-1 text-[11px] text-white cursor-pointer"
+                  >
+                    <option value="">{lang === 'ar' ? 'المستودع...' : 'Warehouse...'}</option>
+                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <input
+                    type="date"
+                    value={auditFilterStart}
+                    onChange={(e) => setAuditFilterStart(e.target.value)}
+                    className="bg-surface border border-outline-variant rounded px-1 py-0.5 text-[10px] text-white"
+                  />
+                  <input
+                    type="date"
+                    value={auditFilterEnd}
+                    onChange={(e) => setAuditFilterEnd(e.target.value)}
+                    className="bg-surface border border-outline-variant rounded px-1 py-0.5 text-[10px] text-white"
+                  />
+                </div>
+                <button
+                  onClick={() => fetchAuditsList(1)}
+                  className="bg-secondary-container text-white py-1 rounded text-[11px] font-bold hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                >
+                  {lang === 'ar' ? 'بحث وتصفية' : 'Search & Filter'}
+                </button>
+              </div>
+
               <div className="flex-grow overflow-auto space-y-3 min-h-0">
                 {auditsList.map(a => (
                   <div key={a.id} className="bg-surface-container p-3 rounded-lg border border-outline-variant space-y-2 text-xs">
@@ -2766,6 +3342,147 @@ export default function Layout(): React.JSX.Element {
                     {lang === 'ar' ? 'لا توجد جلسات جرد سابقة' : 'No previous audit records found'}
                   </div>
                 )}
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-outline-variant/60 flex-shrink-0 text-xs">
+                <button
+                  disabled={auditPage <= 1}
+                  onClick={() => fetchAuditsList(auditPage - 1)}
+                  className="bg-surface-container border border-outline-variant text-white px-2 py-1 rounded hover:bg-surface-bright disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {lang === 'ar' ? 'السابق' : 'Prev'}
+                </button>
+                <span className="text-outline font-mono">
+                  {lang === 'ar' ? `صفحة ${auditPage} من ${auditTotalPages}` : `Page ${auditPage} of ${auditTotalPages}`}
+                </span>
+                <button
+                  disabled={auditPage >= auditTotalPages}
+                  onClick={() => fetchAuditsList(auditPage + 1)}
+                  className="bg-surface-container border border-outline-variant text-white px-2 py-1 rounded hover:bg-surface-bright disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {lang === 'ar' ? 'التالي' : 'Next'}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {inventorySubTab === 'adjustments' && (
+          <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
+            {/* Left Column: Form to create adjustment */}
+            <section className="w-1/3 border border-outline-variant flex flex-col p-4 bg-surface-container-lowest rounded-xl h-full flex-shrink-0">
+              <h3 className="text-primary font-bold text-sm border-b border-outline-variant pb-2 mb-4 flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-primary text-lg">tune</span>
+                {lang === 'ar' ? 'تسوية مخزنية جديدة / إثبات هالك' : 'New Stock Adjustment'}
+              </h3>
+
+              <div className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-on-surface-variant mb-1">{lang === 'ar' ? 'اختر الصنف / المنتج *' : 'Select Product *'}</label>
+                  <select
+                    value={adjustProductId}
+                    onChange={(e) => setAdjustProductId(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded p-2 text-white cursor-pointer"
+                  >
+                    <option value="">{lang === 'ar' ? 'اختر المنتج...' : 'Select Product...'}</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.barcode}) - [الرصيد: {p.currentStock}]</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-on-surface-variant mb-1">{lang === 'ar' ? 'مقدار التعديل (سالب للهالك، موجب للزيادة) *' : 'Quantity Change (negative to decrease, positive to increase) *'}</label>
+                  <input
+                    type="number"
+                    value={adjustQty}
+                    onChange={(e) => setAdjustQty(e.target.value)}
+                    placeholder={lang === 'ar' ? 'مثال: -5 أو +10...' : 'e.g. -5 or 10...'}
+                    className="w-full bg-surface-container border border-outline-variant rounded p-2 text-white font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-on-surface-variant mb-1">{lang === 'ar' ? 'سبب التعديل *' : 'Reason for Adjustment *'}</label>
+                  <select
+                    value={adjustReason}
+                    onChange={(e) => setAdjustReason(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded p-2 text-white cursor-pointer"
+                  >
+                    <option value="DAMAGED">{lang === 'ar' ? 'بضاعة تالفة / هالك' : 'Damaged Goods'}</option>
+                    <option value="EXPIRED">{lang === 'ar' ? 'تاريخ صلاحية منتهي' : 'Expired Goods'}</option>
+                    <option value="THEFT">{lang === 'ar' ? 'عجز / سرقة' : 'Theft / Missing'}</option>
+                    <option value="AUDIT_CORRECTION">{lang === 'ar' ? 'تسوية فروقات جرد' : 'Inventory Audit Discrepancy'}</option>
+                    <option value="OTHER">{lang === 'ar' ? 'أسباب أخرى' : 'Other Reason'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-on-surface-variant mb-1">{lang === 'ar' ? 'ملاحظات وتفاصيل' : 'Notes & Details'}</label>
+                  <textarea
+                    value={adjustNotes}
+                    onChange={(e) => setAdjustNotes(e.target.value)}
+                    placeholder={lang === 'ar' ? 'مثال: سبب التلف أو تاريخ التقرير المكتوب...' : 'Describe why the adjustment is being made...'}
+                    className="w-full h-24 bg-surface-container border border-outline-variant rounded p-2 text-white resize-none outline-none"
+                  />
+                </div>
+
+                <button
+                  onClick={handleCreateAdjustment}
+                  className="w-full py-2.5 bg-primary text-on-primary font-bold rounded hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer mt-2"
+                >
+                  <span className="material-symbols-outlined text-sm font-bold">save</span>
+                  <span>{lang === 'ar' ? 'حفظ واعتماد حركة التسوية' : 'Save Adjustment'}</span>
+                </button>
+              </div>
+            </section>
+
+            {/* Right Column: Historical Adjustments List */}
+            <section className="w-2/3 border border-outline-variant p-4 bg-surface-container-lowest rounded-xl overflow-hidden flex flex-col h-full">
+              <h3 className="text-primary font-bold text-sm border-b border-outline-variant pb-2 mb-4 flex items-center gap-1.5 flex-shrink-0">
+                <span className="material-symbols-outlined text-primary">history</span>
+                {lang === 'ar' ? 'سجل حركات تسوية المخزون التاريخية' : 'Stock Adjustments Log'}
+              </h3>
+
+              <div className="flex-grow overflow-auto border border-outline-variant rounded bg-surface min-h-0">
+                <table className="w-full text-right rtl:text-right border-collapse">
+                  <thead className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-xs z-10">
+                    <tr className="h-10 text-on-surface-variant">
+                      <th className="px-4 py-2 text-right rtl:text-right ltr:text-left">{lang === 'ar' ? 'اسم الصنف' : 'Product'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'الكمية المعدلة' : 'Qty Adjusted'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'السبب' : 'Reason'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'التاريخ' : 'Date'}</th>
+                      <th className="px-4 py-2">{lang === 'ar' ? 'ملاحظات' : 'Notes'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-xs divide-y divide-outline-variant/20 font-data-mono">
+                    {adjustmentsList.map(a => (
+                      <tr key={a.id} className="hover:bg-surface-bright transition-colors h-11">
+                        <td className="px-4 text-right rtl:text-right ltr:text-left font-bold text-white font-sans">{a.product?.name}</td>
+                        <td className={`px-4 text-center font-bold ${a.quantity < 0 ? 'text-red-500' : 'text-green-500'}`}>
+                          {a.quantity > 0 ? `+${a.quantity}` : a.quantity}
+                        </td>
+                        <td className="px-4 text-center text-outline">
+                          {a.reason === 'DAMAGED' && (lang === 'ar' ? 'بضاعة تالفة' : 'Damaged')}
+                          {a.reason === 'EXPIRED' && (lang === 'ar' ? 'صلاحية منتهية' : 'Expired')}
+                          {a.reason === 'THEFT' && (lang === 'ar' ? 'سرقة / عجز' : 'Theft')}
+                          {a.reason === 'AUDIT_CORRECTION' && (lang === 'ar' ? 'فروقات جرد' : 'Audit Correction')}
+                          {a.reason === 'OTHER' && (lang === 'ar' ? 'أخرى' : 'Other')}
+                        </td>
+                        <td className="px-4 text-center text-white">{new Date(a.date).toLocaleDateString()}</td>
+                        <td className="px-4 text-outline font-sans truncate max-w-[200px]" title={a.notes}>{a.notes || '-'}</td>
+                      </tr>
+                    ))}
+                    {adjustmentsList.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-center py-10 font-sans text-outline italic">
+                          {lang === 'ar' ? 'لا توجد حركات تسوية مخزنية مسجلة' : 'No adjustments records found'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </section>
           </div>
@@ -4419,45 +5136,230 @@ export default function Layout(): React.JSX.Element {
           )}
 
           {salesSubTab === 'installments' && (
-            <div className="h-full bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col overflow-hidden">
-              <h3 className="text-primary font-bold text-sm mb-3 flex items-center gap-1.5 flex-shrink-0">
-                <span className="material-symbols-outlined">schedule</span>
-                {lang === 'ar' ? 'متابعة ذمم وأرصدة العملاء والائتمان' : 'Client Limits & Installments'}
-              </h3>
+            <div className="h-full bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col overflow-hidden text-xs">
+              {/* Header Tab Selector inside view */}
+              <div className="flex justify-between items-center pb-3 border-b border-outline-variant/60 flex-shrink-0 mb-4">
+                <h3 className="text-primary font-bold text-sm flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">schedule</span>
+                  {lang === 'ar' ? 'أقساط البيع الآجل ومديونيات العملاء' : 'Credit Installments Ledger'}
+                </h3>
+              </div>
 
+              {/* Upper Section: Quick Stats or Filters */}
+              <div className="grid grid-cols-4 gap-4 mb-4 flex-shrink-0 bg-surface/40 p-3 rounded-lg border border-outline-variant/50">
+                {/* Client filter */}
+                <div>
+                  <label className="block text-[10px] font-bold text-outline mb-1">
+                    {lang === 'ar' ? 'فلترة بحسب العميل' : 'Filter by Client'}
+                  </label>
+                  <select
+                    value={instFilterClient}
+                    onChange={(e) => setInstFilterClient(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded p-1.5 text-xs text-white"
+                  >
+                    <option value="">{lang === 'ar' ? 'كل العملاء' : 'All Clients'}</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Status filter */}
+                <div>
+                  <label className="block text-[10px] font-bold text-outline mb-1">
+                    {lang === 'ar' ? 'حالة القسط' : 'Installment Status'}
+                  </label>
+                  <select
+                    value={instFilterStatus}
+                    onChange={(e) => setInstFilterStatus(e.target.value)}
+                    className="w-full bg-surface-container border border-outline-variant rounded p-1.5 text-xs text-white"
+                  >
+                    <option value="ALL">{lang === 'ar' ? 'كل الحالات' : 'All Statuses'}</option>
+                    <option value="PENDING">{lang === 'ar' ? 'معلق (بانتظار الدفع)' : 'Pending (Unpaid)'}</option>
+                    <option value="OVERDUE">{lang === 'ar' ? 'متأخر (تجاوز تاريخ الاستحقاق)' : 'Overdue (Delayed)'}</option>
+                    <option value="PAID">{lang === 'ar' ? 'مسدد بالكامل' : 'Fully Paid'}</option>
+                  </select>
+                </div>
+
+                {/* Info block */}
+                <div className="col-span-2 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => {
+                      setInstFilterClient('')
+                      setInstFilterStatus('ALL')
+                    }}
+                    className="px-3 py-1.5 border border-outline-variant hover:bg-surface rounded text-[11px] font-bold text-white cursor-pointer"
+                  >
+                    {lang === 'ar' ? 'إعادة ضبط الفلاتر' : 'Reset Filters'}
+                  </button>
+                  <button
+                    onClick={fetchInstallmentsList}
+                    className="px-3 py-1.5 bg-primary text-on-primary hover:brightness-110 rounded text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">refresh</span>
+                    {lang === 'ar' ? 'تحديث البيانات' : 'Refresh'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Installments Table */}
               <div className="flex-grow overflow-auto border border-outline-variant rounded bg-surface min-h-0">
                 <table className="w-full text-right rtl:text-right border-collapse">
-                  <thead className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-xs z-10">
-                    <tr className="h-10 text-on-surface-variant font-bold">
-                      <th className="px-4 py-2 text-right rtl:text-right ltr:text-left">{lang === 'ar' ? 'اسم العميل' : 'Client'}</th>
-                      <th className="px-4 py-2">{lang === 'ar' ? 'رقم الهاتف' : 'Phone'}</th>
-                      <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'الحد الائتماني' : 'Credit Limit'}</th>
-                      <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'الرصيد المستحق' : 'Owed Balance'}</th>
-                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'مؤشر الائتمان' : 'Credit Health'}</th>
+                  <thead className="sticky top-0 bg-surface-container-high border-b border-outline-variant text-[10px] text-on-surface-variant font-bold z-10">
+                    <tr className="h-9">
+                      <th className="px-4 py-2 text-right rtl:text-right ltr:text-left">{lang === 'ar' ? 'العميل' : 'Client'}</th>
+                      <th className="px-4 py-2">{lang === 'ar' ? 'رقم الفاتورة' : 'Invoice No.'}</th>
+                      <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'قيمة القسط' : 'Amount'}</th>
+                      <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'المدفوع' : 'Paid'}</th>
+                      <th className="px-4 py-2 text-left rtl:text-left ltr:text-right">{lang === 'ar' ? 'المتبقي' : 'Remaining'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'تاريخ الاستحقاق' : 'Due Date'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'تاريخ الدفع' : 'Payment Date'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'الحالة' : 'Status'}</th>
+                      <th className="px-4 py-2 text-center">{lang === 'ar' ? 'تحصيل' : 'Action'}</th>
                     </tr>
                   </thead>
                   <tbody className="text-xs divide-y divide-outline-variant/20 font-data-mono">
-                    {clients.map(c => {
-                      const health = c.currentBalance >= c.creditLimit ? 'text-error font-black' : 'text-secondary font-bold'
-                      return (
-                        <tr key={c.id} className="hover:bg-surface-bright transition-colors h-10">
-                          <td className="px-4 text-right rtl:text-right ltr:text-left font-bold text-white">{c.name}</td>
-                          <td className="px-4 text-outline">{c.phone || '---'}</td>
-                          <td className="px-4 text-left rtl:text-left ltr:text-right text-outline">{c.creditLimit.toFixed(2)}</td>
-                          <td className={`px-4 text-left rtl:text-left ltr:text-right ${health}`}>{c.currentBalance.toFixed(2)}</td>
-                          <td className="px-4 text-center">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              c.currentBalance >= c.creditLimit ? 'bg-error/20 text-error' : 'bg-secondary-container/20 text-white'
-                            }`}>
-                              {c.currentBalance >= c.creditLimit ? (lang === 'ar' ? 'متجاوز الحد' : 'Limit Exceeded') : (lang === 'ar' ? 'سليم' : 'Healthy')}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
+                    {installmentsList.length > 0 ? (
+                      installmentsList.map(inst => {
+                        const remaining = inst.amount - inst.paidAmount
+                        const isOverdue = inst.status === 'PENDING' && new Date(inst.dueDate) < new Date()
+                        
+                        let statusBadge = ''
+                        if (inst.status === 'PAID') {
+                          statusBadge = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        } else if (isOverdue) {
+                          statusBadge = 'bg-rose-500/25 text-rose-400 border border-rose-500/30 animate-pulse'
+                        } else {
+                          statusBadge = 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                        }
+
+                        return (
+                          <tr key={inst.id} className="hover:bg-surface-bright/40 transition-colors h-10">
+                            <td className="px-4 text-right rtl:text-right ltr:text-left font-bold text-white">
+                              {inst.client?.name}
+                              <span className="block text-[9px] text-outline font-normal font-sans">{inst.client?.phone || '---'}</span>
+                            </td>
+                            <td className="px-4 text-white text-right font-sans">{inst.salesInvoice?.invoiceNumber}</td>
+                            <td className="px-4 text-left rtl:text-left ltr:text-right font-bold text-white">{inst.amount.toFixed(2)}</td>
+                            <td className="px-4 text-left rtl:text-left ltr:text-right text-emerald-400 font-bold">{inst.paidAmount.toFixed(2)}</td>
+                            <td className="px-4 text-left rtl:text-left ltr:text-right text-amber-400 font-bold">{remaining.toFixed(2)}</td>
+                            <td className="px-4 text-center text-outline">
+                              {new Date(inst.dueDate).toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US')}
+                            </td>
+                            <td className="px-4 text-center text-outline">
+                              {inst.paidDate ? new Date(inst.paidDate).toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US') : '---'}
+                            </td>
+                            <td className="px-4 text-center">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${statusBadge}`}>
+                                {inst.status === 'PAID'
+                                  ? (lang === 'ar' ? 'مسدد بالكامل' : 'Paid')
+                                  : isOverdue
+                                    ? (lang === 'ar' ? 'متأخر ومستحق' : 'Overdue')
+                                    : (lang === 'ar' ? 'مستحق الدفع' : 'Pending')}
+                              </span>
+                            </td>
+                            <td className="px-4 text-center">
+                              {remaining > 0 ? (
+                                <button
+                                  onClick={() => {
+                                    setShowPayInstModal(inst)
+                                    setPayInstAmount(remaining.toString())
+                                  }}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                                >
+                                  {lang === 'ar' ? 'تحصيل' : 'Collect'}
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-outline">---</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={9} className="px-4 py-8 text-center text-outline">
+                          {lang === 'ar' ? 'لا توجد أقساط مطابقة للفلاتر المحددة' : 'No credit installments matching filters.'}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {/* Pay/Collect Installment Overlay Modal */}
+              {showPayInstModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-surface-container border border-outline-variant p-5 rounded-xl w-[400px] flex flex-col shadow-2xl animate-fade-in text-xs">
+                    <div className="flex justify-between items-center pb-3 border-b border-outline-variant/60 mb-4">
+                      <h4 className="text-emerald-400 font-bold text-sm flex items-center gap-1.5">
+                        <span className="material-symbols-outlined">payments</span>
+                        {lang === 'ar' ? 'تحصيل قسط بيع آجل' : 'Collect Credit Installment'}
+                      </h4>
+                      <button
+                        onClick={() => setShowPayInstModal(null)}
+                        className="text-outline hover:text-white cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-sm">close</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 mb-4">
+                      <div className="bg-surface/50 p-3 rounded border border-outline-variant/40 space-y-1">
+                        <div className="flex justify-between text-outline">
+                          <span>{lang === 'ar' ? 'العميل:' : 'Client:'}</span>
+                          <span className="text-white font-bold">{showPayInstModal.client?.name}</span>
+                        </div>
+                        <div className="flex justify-between text-outline">
+                          <span>{lang === 'ar' ? 'الفاتورة:' : 'Invoice:'}</span>
+                          <span className="text-white font-mono">{showPayInstModal.salesInvoice?.invoiceNumber}</span>
+                        </div>
+                        <div className="flex justify-between text-outline">
+                          <span>{lang === 'ar' ? 'قيمة القسط الأصلية:' : 'Original Amount:'}</span>
+                          <span className="text-white font-bold">{showPayInstModal.amount.toFixed(2)} ج.م</span>
+                        </div>
+                        <div className="flex justify-between text-outline border-t border-outline-variant/20 pt-1 mt-1">
+                          <span>{lang === 'ar' ? 'المتبقي المترصد للتحصيل:' : 'Remaining Balance:'}</span>
+                          <span className="text-amber-400 font-bold">{(showPayInstModal.amount - showPayInstModal.paidAmount).toFixed(2)} ج.م</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-outline mb-1">
+                          {lang === 'ar' ? 'القيمة المحصلة نقداً (ج.م) *' : 'Cash Amount Received (EGP) *'}
+                        </label>
+                        <input
+                          type="number"
+                          value={payInstAmount}
+                          onChange={(e) => setPayInstAmount(e.target.value)}
+                          className="w-full bg-surface-container-lowest border border-outline-variant rounded p-2 text-sm text-white font-mono"
+                          required
+                        />
+                        <span className="text-[9px] text-outline mt-1 block">
+                          {lang === 'ar'
+                            ? '⚠️ سيتم إيداع هذا المبلغ تلقائياً في الخزينة ونقديات الوردية وتخفيضه من حساب العميل.'
+                            : '⚠️ This receipt will be added to the cash safe and decrease customer balance.'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-3 border-t border-outline-variant/60">
+                      <button
+                        onClick={() => setShowPayInstModal(null)}
+                        className="px-4 py-2 border border-outline-variant rounded hover:bg-surface-bright text-white cursor-pointer font-bold text-xs"
+                      >
+                        {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                      </button>
+                      <button
+                        onClick={handlePayInstallment}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-500 cursor-pointer font-bold text-xs"
+                      >
+                        {lang === 'ar' ? 'إثبات السداد والتحصيل' : 'Confirm Cash Collection'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -6133,19 +7035,99 @@ export default function Layout(): React.JSX.Element {
 
 
               <div className="space-y-4">
-                <h3 className="text-xs font-bold text-outline uppercase border-b border-outline-variant pb-1.5">
-                  {lang === 'ar' ? 'طباعة وتذييل الفاتورة' : 'Receipt Customization'}
+                <h3 className="text-xs font-bold text-outline uppercase border-b border-outline-variant pb-1.5 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-base text-primary">receipt_long</span>
+                  {lang === 'ar' ? 'تخصيص الفاتورة' : 'Invoice Designer'}
                 </h3>
+
+                {/* Color picker */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase text-on-surface-variant block">{t[lang].receiptFooter}</label>
-                  <textarea 
-                    value={settings.receiptFooter || ''}
-                    onChange={(e) => setSettings({ ...settings, receiptFooter: e.target.value })}
-                    className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm outline-none focus:border-primary h-24 resize-none rounded"
-                    placeholder="شكراً لزيارتكم!"
+                  <label className="text-[10px] font-bold uppercase text-on-surface-variant block">
+                    {lang === 'ar' ? '🎨 اللون الرئيسي للفاتورة' : 'Invoice Primary Color'}
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={(settings as any).invoiceColor || '#1a56db'}
+                      onChange={(e) => setSettings({ ...settings, invoiceColor: e.target.value } as any)}
+                      className="w-10 h-10 rounded cursor-pointer border border-outline-variant"
+                    />
+                    <input
+                      type="text"
+                      value={(settings as any).invoiceColor || '#1a56db'}
+                      onChange={(e) => setSettings({ ...settings, invoiceColor: e.target.value } as any)}
+                      className="bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm outline-none focus:border-primary rounded font-mono w-32"
+                      placeholder="#1a56db"
+                    />
+                    <div className="flex gap-2 flex-wrap">
+                      {['#1a56db','#0f766e','#7c3aed','#b91c1c','#c2410c','#15803d','#1d4ed8'].map(c => (
+                        <button key={c} type="button"
+                          onClick={() => setSettings({ ...settings, invoiceColor: c } as any)}
+                          className="w-7 h-7 rounded-full border-2 cursor-pointer transition-transform hover:scale-110"
+                          style={{ background: c, borderColor: (settings as any).invoiceColor === c ? '#fff' : c }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Header note */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-on-surface-variant block">
+                    {lang === 'ar' ? '📌 نص مخصص في أعلى الفاتورة' : 'Custom Header Note'}
+                  </label>
+                  <input
+                    type="text"
+                    value={(settings as any).receiptHeaderNote || ''}
+                    onChange={(e) => setSettings({ ...settings, receiptHeaderNote: e.target.value } as any)}
+                    className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm outline-none focus:border-primary rounded"
+                    placeholder={lang === 'ar' ? 'مثال: سياسة الإرجاع: خلال 7 أيام' : 'e.g. Return policy: within 7 days'}
                   />
                 </div>
+
+                {/* Footer */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-on-surface-variant block">{t[lang].receiptFooter}</label>
+                  <textarea
+                    value={settings.receiptFooter || ''}
+                    onChange={(e) => setSettings({ ...settings, receiptFooter: e.target.value })}
+                    className="w-full bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 text-sm outline-none focus:border-primary h-20 resize-none rounded"
+                    placeholder="شكراً لزيارتكم! نرحب بعودتكم"
+                  />
+                </div>
+
+                {/* Toggles */}
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-3 cursor-pointer bg-surface-container-high rounded p-2.5 border border-outline-variant">
+                    <input
+                      type="checkbox"
+                      checked={(settings as any).invoiceShowVat !== false}
+                      onChange={(e) => setSettings({ ...settings, invoiceShowVat: e.target.checked } as any)}
+                      className="rounded w-4 h-4 cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-xs font-bold text-on-surface">{lang === 'ar' ? 'إظهار الضريبة 14%' : 'Show 14% VAT'}</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer bg-surface-container-high rounded p-2.5 border border-outline-variant">
+                    <input
+                      type="checkbox"
+                      checked={(settings as any).invoiceShowQr !== false}
+                      onChange={(e) => setSettings({ ...settings, invoiceShowQr: e.target.checked } as any)}
+                      className="rounded w-4 h-4 cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-xs font-bold text-on-surface">{lang === 'ar' ? 'إظهار كود QR' : 'Show QR Code'}</span>
+                  </label>
+                </div>
+
+                {/* Live preview badge */}
+                <div
+                  className="rounded-xl p-4 border-2 text-white text-center font-bold text-sm"
+                  style={{ background: (settings as any).invoiceColor || '#1a56db', borderColor: (settings as any).invoiceColor || '#1a56db' }}
+                >
+                  <span className="material-symbols-outlined text-lg align-middle mr-2">receipt_long</span>
+                  {lang === 'ar' ? 'معاينة: هذا هو لون الفاتورة' : 'Preview: Invoice accent color'}
+                </div>
               </div>
+
 
               <div className="space-y-4">
                 <h3 className="text-xs font-bold text-outline uppercase border-b border-outline-variant pb-1.5">
@@ -6186,7 +7168,7 @@ export default function Layout(): React.JSX.Element {
               {lang === 'ar' ? 'إعدادات النظام المتقدمة والصيانة' : 'Advanced System Maintenance'}
             </h2>
           </div>
-          <div className="p-6 grid grid-cols-3 gap-6">
+          <div className="p-6 grid grid-cols-4 gap-6">
             <div className="space-y-4">
               <h3 className="text-xs font-bold text-outline uppercase border-b border-outline-variant pb-1.5">
                 {lang === 'ar' ? 'حساب التكلفة والمخزون' : 'Costing Method'}
@@ -6238,6 +7220,48 @@ export default function Layout(): React.JSX.Element {
                     <option value="PRICE">Price</option>
                   </select>
                 </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-xs font-bold text-outline uppercase border-b border-outline-variant pb-1.5">
+                {lang === 'ar' ? 'النسخ الاحتياطي واستعادة البيانات' : 'Backup & Recovery'}
+              </h3>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await window.api.settings.backup({ userId: user?.id })
+                    if (res.success) {
+                      alert(lang === 'ar' ? `✅ تم حفظ النسخة الاحتياطية بنجاح في:\n${res.filePath}` : `✅ Backup saved successfully at:\n${res.filePath}`)
+                    } else {
+                      alert(res.error)
+                    }
+                  }}
+                  className="w-full bg-primary-container text-white py-2 rounded text-xs font-bold hover:brightness-110 active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-transparent shadow"
+                >
+                  <span className="material-symbols-outlined text-sm">backup</span>
+                  <span>{lang === 'ar' ? 'أخذ نسخة احتياطية (Backup)' : 'Create Backup File'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const confirmRestore = confirm(lang === 'ar' ? '⚠️ تحذير: استعادة نسخة احتياطية سيؤدي إلى استبدال قاعدة البيانات الحالية بالكامل! هل ترغب في الاستمرار؟' : '⚠️ Warning: Restoring database will overwrite all current system data! Continue?')
+                    if (!confirmRestore) return
+
+                    const res = await window.api.settings.restore({ userId: user?.id })
+                    if (res.success) {
+                      alert(lang === 'ar' ? '✅ تم استعادة البيانات بنجاح! سيقوم البرنامج بإعادة التشغيل الآن لتطبيق التغييرات.' : '✅ Database restored successfully! App will now relaunch.')
+                      window.api.app.relaunch()
+                    } else {
+                      alert(res.error)
+                    }
+                  }}
+                  className="w-full bg-surface-container border border-outline-variant hover:bg-surface-bright text-white py-2 rounded text-xs font-bold active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">settings_backup_restore</span>
+                  <span>{lang === 'ar' ? 'استعادة نسخة احتياطية (Restore)' : 'Restore Backup File'}</span>
+                </button>
               </div>
             </div>
 
@@ -7684,7 +8708,13 @@ export default function Layout(): React.JSX.Element {
                       {u.role}
                     </span>
                   </td>
-                  <td className="px-4 text-center">
+                  <td className="px-4 text-center flex items-center justify-center gap-3">
+                    <button
+                      onClick={() => openPermissionsModal(u)}
+                      className="text-primary hover:underline text-[10px] font-bold cursor-pointer"
+                    >
+                      {lang === 'ar' ? 'الصلاحيات' : 'Permissions'}
+                    </button>
                     <button onClick={() => handleDeleteUser(u.id)} className="text-error hover:underline text-[10px] font-bold cursor-pointer">
                       {lang === 'ar' ? 'تعطيل' : 'Disable'}
                     </button>
@@ -7694,6 +8724,105 @@ export default function Layout(): React.JSX.Element {
             </tbody>
           </table>
         </div>
+
+        {/* User Permissions Config Modal */}
+        {selectedUserForPermissions && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-surface-container border border-outline-variant p-6 rounded-xl w-[500px] max-h-[85vh] flex flex-col shadow-2xl animate-fade-in text-xs">
+              <div className="flex justify-between items-center pb-3 border-b border-outline-variant/60 mb-4 flex-shrink-0">
+                <h3 className="text-primary font-bold text-sm flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">shield_person</span>
+                  {lang === 'ar' 
+                    ? `إدارة صلاحيات الموظف: ${selectedUserForPermissions.name}` 
+                    : `Manage Employee Permissions: ${selectedUserForPermissions.name}`}
+                </h3>
+                <button 
+                  onClick={() => setSelectedUserForPermissions(null)}
+                  className="text-outline hover:text-white cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+
+              <div className="flex-grow overflow-y-auto space-y-4 pr-1 min-h-0 mb-4">
+                <p className="text-[10px] text-outline leading-relaxed bg-surface/50 p-2.5 rounded border border-outline-variant/40">
+                  {lang === 'ar'
+                    ? '⚠️ اختر التبويبات المسموح للموظف برؤيتها والوصول إليها في التطبيق. موظفو الإدارة (ADMIN) يمتلكون كافة الصلاحيات بشكل افتراضي.'
+                    : '⚠️ Check the modules you want this employee to access. Admins have access to everything by default.'}
+                </p>
+
+                <div className="border border-outline-variant rounded bg-surface overflow-hidden">
+                  <table className="w-full text-right rtl:text-right border-collapse">
+                    <thead className="bg-surface-container-high border-b border-outline-variant text-[10px] text-on-surface-variant">
+                      <tr className="h-9">
+                        <th className="px-4 py-1.5 text-right rtl:text-right ltr:text-left">{lang === 'ar' ? 'التبويب / الصفحة' : 'Sidebar Section'}</th>
+                        <th className="px-4 py-1.5 text-center">{lang === 'ar' ? 'مشاهدة (دخول)' : 'View Access'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/20">
+                      {[
+                        { id: 'pos', ar: 'نقطة البيع الكاشير (POS)', en: 'Point of Sale (POS)' },
+                        { id: 'purchases', ar: 'فاتورة المشتريات والموردين', en: 'Purchases & Suppliers' },
+                        { id: 'sales', ar: 'سجل المبيعات والعملاء', en: 'Sales Ledger & Clients' },
+                        { id: 'inventory', ar: 'المخازن والمخزون والهالك', en: 'Warehouses & Stock' },
+                        { id: 'expenses', ar: 'إثبات المصروفات', en: 'Expenses Ledger' },
+                        { id: 'employees', ar: 'شؤون الموظفين والرواتب', en: 'Employees & Payroll' },
+                        { id: 'vault', ar: 'الخزينة النقدية (الsafe)', en: 'Cash Safe (Vault)' },
+                        { id: 'bank', ar: 'الحساب البنكي والتحويلات', en: 'Bank & Transfers' },
+                        { id: 'profits', ar: 'تقارير الأرباح والضريبة', en: 'Profits & VAT Reports' },
+                        { id: 'master_data', ar: 'البيانات الأساسية (الأكواد)', en: 'Master Data Setup' },
+                        { id: 'settings', ar: 'إعدادات النظام والشركة', en: 'System Settings' }
+                      ].map(mod => {
+                        const rights = userPermissionsMap[mod.id] || { canView: false, canCreate: false, canEdit: false, canDelete: false }
+                        return (
+                          <tr key={mod.id} className="h-10 hover:bg-surface-bright/50">
+                            <td className="px-4 text-white font-bold">{lang === 'ar' ? mod.ar : mod.en}</td>
+                            <td className="px-4 text-center">
+                              <input
+                                type="checkbox"
+                                checked={rights.canView}
+                                onChange={(e) => {
+                                  setUserPermissionsMap({
+                                    ...userPermissionsMap,
+                                    [mod.id]: {
+                                      ...rights,
+                                      canView: e.target.checked,
+                                      canCreate: e.target.checked, // Use true/false values
+                                      canEdit: e.target.checked,
+                                      canDelete: e.target.checked
+                                    }
+                                  })
+                                }}
+                                className="rounded border-outline-variant bg-surface-container-highest text-primary w-4 h-4 cursor-pointer focus:ring-0"
+                              />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-outline-variant/60 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedUserForPermissions(null)}
+                  className="px-4 py-2 border border-outline-variant rounded hover:bg-surface-bright text-white cursor-pointer font-bold text-xs"
+                >
+                  {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveUserPermissions}
+                  className="px-4 py-2 bg-primary text-on-primary rounded hover:brightness-110 cursor-pointer font-bold text-xs"
+                >
+                  {lang === 'ar' ? 'حفظ الصلاحيات المحددة' : 'Save Active Permissions'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -8775,7 +9904,7 @@ export default function Layout(): React.JSX.Element {
   return (
     <div className="flex h-screen w-screen bg-background text-on-background select-none overflow-hidden font-body-md" dir={direction}>
       {/* 1. Sidebar Navigation */}
-      {user.role !== 'CASHIER' && (
+      {user && (
         <aside className={`h-screen w-64 fixed top-0 bg-surface-container border-outline-variant flex flex-col py-4 z-50 ${
           lang === 'ar'
             ? 'right-0 border-l'
@@ -8983,9 +10112,7 @@ export default function Layout(): React.JSX.Element {
 
       {/* 2. Main Container (Header + Content + Footer) */}
       <main className={`flex-1 flex flex-col h-full overflow-hidden transition-all duration-200 ${
-        user.role === 'CASHIER'
-          ? 'm-0'
-          : lang === 'ar' ? 'mr-64 ml-0' : 'ml-64 mr-0'
+        lang === 'ar' ? 'mr-64 ml-0' : 'ml-64 mr-0'
       }`}>
         {/* Header Bar */}
         <header className="h-12 bg-surface-container-high border-b border-outline-variant flex items-center justify-between px-4 z-30">

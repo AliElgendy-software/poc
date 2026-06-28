@@ -85,6 +85,7 @@
   font-family: 'Inter', sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  font-size: 112%; /* Globally enlarge font size by 12% */
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;

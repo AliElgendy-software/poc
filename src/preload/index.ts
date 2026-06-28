@@ -29,7 +29,9 @@ const api = {
     getDbConfig: () => ipcRenderer.invoke('settings:getDbConfig'),
     saveDbConfig: (data: { databaseUrl: string; dbType?: string }) => ipcRenderer.invoke('settings:saveDbConfig', data),
     testDbConnection: (data: { databaseUrl: string; dbType: string }) => ipcRenderer.invoke('settings:testDbConnection', data),
-    changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => ipcRenderer.invoke('settings:changeDbPassword', data)
+    changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => ipcRenderer.invoke('settings:changeDbPassword', data),
+    backup: (data) => ipcRenderer.invoke('settings:backup', data),
+    restore: (data) => ipcRenderer.invoke('settings:restore', data)
   },
   products: {
     list: () => ipcRenderer.invoke('products:list'),
@@ -48,7 +50,11 @@ const api = {
   },
   sales: {
     createInvoice: (data) => ipcRenderer.invoke('sales:createInvoice', data),
-    listInvoices: () => ipcRenderer.invoke('sales:listInvoices')
+    listInvoices: () => ipcRenderer.invoke('sales:listInvoices'),
+    delete: (data: { invoiceId: string; userId: string }) => ipcRenderer.invoke('sales:deleteInvoice', data),
+    update: (data: { invoiceId: string; invoiceData: any; userId: string }) => ipcRenderer.invoke('sales:updateInvoice', data),
+    listInstallments: (filters) => ipcRenderer.invoke('sales:listInstallments', filters),
+    payInstallment: (data) => ipcRenderer.invoke('sales:payInstallment', data)
   },
   returns: {
     create: (data) => ipcRenderer.invoke('returns:create', data)
@@ -149,7 +155,9 @@ const api = {
     movement: (productId) => ipcRenderer.invoke('inventory:movement', productId),
     listAllMovements: () => ipcRenderer.invoke('inventory:listAllMovements'),
     createAudit: (data) => ipcRenderer.invoke('inventory:createAudit', data),
-    listAudits: () => ipcRenderer.invoke('inventory:listAudits')
+    listAudits: (filters) => ipcRenderer.invoke('inventory:listAudits', filters),
+    createAdjustment: (data: { productId: string; quantity: number; reason: string; notes?: string; userId: string }) => ipcRenderer.invoke('stock:createAdjustment', data),
+    listAdjustments: () => ipcRenderer.invoke('stock:listAdjustments')
   },
   vaults: {
     list: () => ipcRenderer.invoke('vaults:list'),
@@ -159,7 +167,11 @@ const api = {
     cashOut: (data) => ipcRenderer.invoke('vaults:cashOut', data),
     transferToVault: (data) => ipcRenderer.invoke('vaults:transferToVault', data),
     transferToBank: (data) => ipcRenderer.invoke('vaults:transferToBank', data),
-    getTransactions: (vaultId) => ipcRenderer.invoke('vaults:getTransactions', vaultId)
+    getTransactions: (vaultId) => ipcRenderer.invoke('vaults:getTransactions', vaultId),
+    updateTransaction: (data: { txId: string; amount: number; notes?: string; userId: string }) => ipcRenderer.invoke('financials:updateTransaction', data)
+  },
+  reports: {
+    getVatReport: (data: { startDate?: string; endDate?: string }) => ipcRenderer.invoke('reports:getVatReport', data)
   },
   profits: {
     getInvoiceProfits: () => ipcRenderer.invoke('profits:getInvoiceProfits'),

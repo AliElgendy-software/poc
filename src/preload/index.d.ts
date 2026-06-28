@@ -28,6 +28,8 @@ export interface ApiBridge {
     saveDbConfig: (data: { databaseUrl: string; dbType?: string }) => Promise<{ success: boolean; error?: string }>
     testDbConnection: (data: { databaseUrl: string; dbType: string }) => Promise<{ success: boolean; messageAr?: string; messageEn?: string }>
     changeDbPassword: (data: { oldPass: string; newPass: string; host?: string; port?: number; database?: string }) => Promise<{ success: boolean; databaseUrl?: string; error?: string }>
+    backup: (data: { userId?: string }) => Promise<{ success: boolean; filePath?: string; error?: string }>
+    restore: (data: { userId?: string }) => Promise<{ success: boolean; error?: string }>
   }
   products: {
     list: () => Promise<{ success: boolean; data?: any[]; error?: string }>
@@ -47,6 +49,10 @@ export interface ApiBridge {
   sales: {
     createInvoice: (data: any) => Promise<{ success: boolean; data?: any; error?: string }>
     listInvoices: () => Promise<{ success: boolean; data?: any[]; error?: string }>
+    delete: (data: { invoiceId: string; userId: string }) => Promise<{ success: boolean; error?: string }>
+    update: (data: { invoiceId: string; invoiceData: any; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
+    listInstallments: (filters: { clientId?: string; status?: string; overdue?: boolean }) => Promise<{ success: boolean; data?: any[]; error?: string }>
+    payInstallment: (data: { installmentId: string; amount: number; userId: string; shiftId?: string }) => Promise<{ success: boolean; data?: any; error?: string }>
   }
   returns: {
     create: (data: any) => Promise<{ success: boolean; data?: any; error?: string }>
@@ -147,7 +153,9 @@ export interface ApiBridge {
     movement: (productId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>
     listAllMovements: () => Promise<{ success: boolean; data?: any[]; error?: string }>
     createAudit: (data: { warehouseId: string; userId: string; notes?: string; items: any[] }) => Promise<{ success: boolean; data?: any; error?: string }>
-    listAudits: () => Promise<{ success: boolean; data?: any[]; error?: string }>
+    listAudits: (filters?: { startDate?: string; endDate?: string; auditNumber?: string; warehouseId?: string; page?: number; limit?: number }) => Promise<{ success: boolean; data?: any[]; pagination?: any; error?: string }>
+    createAdjustment: (data: { productId: string; quantity: number; reason: string; notes?: string; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
+    listAdjustments: () => Promise<{ success: boolean; data?: any[]; error?: string }>
   }
   vaults: {
     list: () => Promise<{ success: boolean; data?: any[]; error?: string }>
@@ -158,6 +166,10 @@ export interface ApiBridge {
     transferToVault: (data: { fromVaultId: string; toVaultId: string; amount: number; notes?: string; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
     transferToBank: (data: { vaultId: string; bankId: string; amount: number; notes?: string; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
     getTransactions: (vaultId: string) => Promise<{ success: boolean; data?: any[]; error?: string }>
+    updateTransaction: (data: { txId: string; amount: number; notes?: string; userId: string }) => Promise<{ success: boolean; data?: any; error?: string }>
+  }
+  reports: {
+    getVatReport: (data: { startDate?: string; endDate?: string }) => Promise<{ success: boolean; data?: any; error?: string }>
   }
   profits: {
     getInvoiceProfits: () => Promise<{ success: boolean; data?: any[]; error?: string }>

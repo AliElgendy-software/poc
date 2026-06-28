@@ -77,6 +77,7 @@ model Product {
   transferItems       StockTransferItem[]
   movements           ProductMovement[]
   auditItems          InventoryAuditItem[]
+  adjustments         StockAdjustment[]
 }
 
 model Supplier {
@@ -123,6 +124,10 @@ model PurchaseItem {
   purchasePrice     Float
   expiryDate        DateTime?
   createdAt         DateTime        @default(now())
+  // New packaging fields
+  cartonCount       Float    @default(1)
+  unitsPerCarton    Float    @default(1)
+  totalQuantity     Float    @default(0)
 }
 
 model Client {
@@ -155,7 +160,7 @@ model SalesInvoice {
   totalAmount       Float
   paidAmount        Float          @default(0.0)
   paymentType       String         @default("CASH") // "CASH" | "CARD" | "CREDIT" | "INSTALLMENT"
-  status            String         @default("PAID") // "PAID" | "REFUNDED" | "PARTIAL_REFUNDED"
+  status            String          @default("ACTIVE") // "ACTIVE" | "VOIDED"
   shiftId           String
   shift             Shift          @relation(fields: [shiftId], references: [id])
   isDelivery        Boolean        @default(false)
@@ -182,6 +187,10 @@ model SalesItem {
   isReturned     Boolean      @default(false)
   returnedQty    Int          @default(0)
   createdAt      DateTime     @default(now())
+  // New packaging fields
+  cartonCount    Float    @default(1)
+  unitsPerCarton Float    @default(1)
+  totalQuantity  Float    @default(0)
 }
 
 model ReturnInvoice {
@@ -301,6 +310,11 @@ model Settings {
   storePhone         String?
   storeAddress       String?
   receiptFooter      String?
+  receiptHeaderNote  String?  // نص إضافي في رأس الفاتورة
+  invoiceColor       String?  @default("#1a56db") // لون رئيسي للفاتورة
+  invoiceShowLogo    Boolean  @default(true)
+  invoiceShowVat     Boolean  @default(true)
+  invoiceShowQr      Boolean  @default(true)
   printerConfig      String?  // JSON serialized printer setup
   taxNumber          String?  // البطاقة الضريبية
   commercialRegister String?  // السجل التجاري
@@ -622,5 +636,16 @@ model InventoryAuditItem {
   actualStock      Int
   difference       Int
   createdAt        DateTime       @default(now())
+}
+
+model StockAdjustment {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Int      // Positive for additions, negative for losses/damage
+  reason      String   // "DAMAGED" | "EXPIRED" | "THEFT" | "AUDIT_CORRECTION" | "OTHER"
+  notes       String?
+  userId      String
+  date        DateTime @default(now())
 }
 
