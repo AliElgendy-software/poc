@@ -883,7 +883,7 @@ export default function Layout(): React.JSX.Element {
     }
 
     const handleFocusBack = () => {
-      if (activeView === 'pos' && !managerApproval?.show) {
+      if (user && activeView === 'pos' && !managerApproval?.show) {
         const activeEl = document.activeElement
         if (!activeEl || (activeEl.tagName !== 'INPUT' && activeEl.tagName !== 'TEXTAREA')) {
           scannerInputRef.current?.focus()
