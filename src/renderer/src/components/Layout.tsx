@@ -1077,20 +1077,39 @@ export default function Layout(): React.JSX.Element {
       }
     }
 
-    const handleFocusBack = () => {
+    // Optimized focus management: Only snap back to scanner if NOT currently typing elsewhere
+    const handleFocusBack = (e: MouseEvent) => {
       if (user && activeView === 'pos' && !managerApproval?.show) {
-        const activeEl = document.activeElement
-        if (!activeEl || (activeEl.tagName !== 'INPUT' && activeEl.tagName !== 'TEXTAREA')) {
-          scannerInputRef.current?.focus()
+        const target = e.target as HTMLElement | null
+        const isWritable = target && (
+          target.tagName === 'INPUT' || 
+          target.tagName === 'TEXTAREA' || 
+          target.isContentEditable ||
+          target.closest('.modal-content') // Don't snap if clicking inside a modal
+        )
+        
+        if (!isWritable) {
+          setTimeout(() => {
+            const activeEl = document.activeElement
+            const isActuallyTyping = activeEl && (
+              activeEl.tagName === 'INPUT' || 
+              activeEl.tagName === 'TEXTAREA' || 
+              activeEl.isContentEditable
+            )
+            if (!isActuallyTyping) {
+              scannerInputRef.current?.focus()
+            }
+          }, 50)
         }
       }
     }
 
     window.addEventListener('keydown', handleGlobalKeyDown)
-    document.addEventListener('click', handleFocusBack)
+    // We keep the click listener but make it much smarter to avoid the "lock" behavior
+    document.addEventListener('mousedown', handleFocusBack) 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown)
-      document.removeEventListener('click', handleFocusBack)
+      document.removeEventListener('mousedown', handleFocusBack)
     }
   }, [activeView, managerApproval?.show])
 
